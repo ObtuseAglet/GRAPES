@@ -70,7 +70,7 @@ function App() {
           Background Color:
           <input
             type="color"
-            value={backgroundColor}
+            value={backgroundColor || '#ffffff'}
             onChange={(e) => setBackgroundColor(e.target.value)}
           />
         </label>
@@ -81,7 +81,7 @@ function App() {
           Text Color:
           <input
             type="color"
-            value={textColor}
+            value={textColor || '#000000'}
             onChange={(e) => setTextColor(e.target.value)}
           />
         </label>
