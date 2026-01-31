@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GRAPES Extension Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+        }
+        .card {
+            background: #f4f4f4;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        p {
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>GRAPES Extension Test Page</h1>
+    
+    <div class="card">
+        <h2>Welcome!</h2>
+        <p>This is a test page to demonstrate the GRAPES Chrome extension.</p>
+        <p>Use the extension to customize the appearance of this page:</p>
+        <ul>
+            <li>Change the background color</li>
+            <li>Modify text colors</li>
+            <li>Adjust font size</li>
+            <li>Change font family</li>
+            <li>Add custom CSS</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h2>How to Test</h2>
+        <ol>
+            <li>Install the GRAPES extension in Chrome</li>
+            <li>Click the extension icon in your toolbar</li>
+            <li>Configure your preferences</li>
+            <li>Click "Save Preferences"</li>
+            <li>Watch this page update in real-time!</li>
+        </ol>
+    </div>
+
+    <div class="card">
+        <h2>Sample Content</h2>
+        <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+        <p>Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+    </div>
+
+    <div class="card" style="border: 2px solid #e94560;">
+        <h2>🔍 DOM Monitoring Test</h2>
+        <p>This section simulates a website trying to detect DOM modifications using MutationObserver.</p>
+        <button id="start-observer" style="background: #e94560; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px;">
+            Start DOM Monitoring
+        </button>
+        <button id="stop-observer" style="background: #666; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-left: 10px;" disabled>
+            Stop Monitoring
+        </button>
+        <div id="observer-status" style="margin-top: 15px; padding: 10px; background: #fff; border-radius: 4px; font-family: monospace; font-size: 12px;">
+            Status: Not monitoring
+        </div>
+        <p style="font-size: 12px; color: #999; margin-top: 10px;">
+            When you click "Start DOM Monitoring", GRAPES should show a "!" badge and toast notification.
+        </p>
+    </div>
+
+    <script>
+        let observer = null;
+        const startBtn = document.getElementById('start-observer');
+        const stopBtn = document.getElementById('stop-observer');
+        const status = document.getElementById('observer-status');
+
+        startBtn.addEventListener('click', () => {
+            // Create a MutationObserver that watches the entire document
+            // This is the type of suspicious behavior GRAPES detects
+            observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    const time = new Date().toLocaleTimeString();
+                    status.innerHTML += `<br>[${time}] Detected: ${mutation.type} on ${mutation.target.nodeName}`;
+                    
+                    // Keep only last 5 entries
+                    const lines = status.innerHTML.split('<br>');
+                    if (lines.length > 6) {
+                        status.innerHTML = lines.slice(-6).join('<br>');
+                    }
+                });
+            });
+
+            // This triggers the GRAPES suspicious observation alert
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: true
+            });
+
+            status.innerHTML = 'Status: <span style="color: #e94560;">Monitoring active</span> - watching document.body for ALL changes';
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+        });
+
+        stopBtn.addEventListener('click', () => {
+            if (observer) {
+                observer.disconnect();
+                observer = null;
+            }
+            status.innerHTML = 'Status: Monitoring stopped';
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        });
+    </script>
+</body>
+</html>
