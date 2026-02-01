@@ -11,5 +11,11 @@ export default defineConfig({
       default_icon: 'icon.svg',
       default_popup: 'popup.html',
     },
+    web_accessible_resources: [
+      {
+        resources: ['stealth-test-runner.js'],
+        matches: ['<all_urls>'],
+      },
+    ],
   },
 });
