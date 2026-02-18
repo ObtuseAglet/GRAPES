@@ -11,12 +11,16 @@
     "fix-paths": "sed -i 's|src=\"/chunks/|src=\"chunks/|g; s|href=\"/chunks/|href=\"chunks/|g; s|href=\"/assets/|href=\"assets/|g' .output/chrome-mv3/*.html 2>/dev/null || true",
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@biomejs/biome": "^2.4.2",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
     "@wxt-dev/module-react": "^1.1.5",
