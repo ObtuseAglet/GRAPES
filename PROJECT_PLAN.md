@@ -492,4 +492,4 @@ npm test          # Run unit tests (after Phase 5)
 - **MAIN world stealth script**: `stealth.content.ts` intercepts `MutationObserver` to hide GRAPES DOM modifications from page scripts. Must run before page scripts.
 - **Isolated world content script**: `content.ts` handles detection events and notifications. Communicates with the MAIN world via `CustomEvent`.
 - **Biome.js**: Replaces ESLint and Prettier. Use `npm run lint:fix` to auto-format.
-- **React**: Used for onboarding (full page) and popup (compact UI). No separate build step — WXT handles JSX/TSX compilation.
+- **React**: Used for onboarding (full page). Popup will be migrated to React in Phase 2. No separate build step — WXT handles JSX/TSX compilation.
