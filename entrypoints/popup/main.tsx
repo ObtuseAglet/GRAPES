@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { browser } from 'wxt/browser';
 import { ButtonGroup } from '../../lib/components/ButtonGroup';
 import { EmptyState } from '../../lib/components/EmptyState';
 import { StatusBadge } from '../../lib/components/StatusBadge';
+import { ACCESSIBILITY_PRESETS, BUILT_IN_THEMES } from '../../lib/themes';
 import type {
+  CustomStyles,
   GrapesPreferences,
   SurveillanceData,
   SurveillanceEvent,
@@ -45,6 +47,93 @@ const THREATS: Record<string, { icon: string; label: string; color: string; desc
     desc: 'Cross-site tracking',
   },
 };
+
+const DEFAULT_PREFERENCES: GrapesPreferences = {
+  globalMode: 'detection-only',
+  siteSettings: {},
+  customStylesEnabled: false,
+  customStyles: {},
+  suppressedNotificationDomains: [],
+  onboardingComplete: false,
+  loggingEnabled: true,
+};
+
+const FONT_PRESETS = [
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  'Arial, sans-serif',
+  'Georgia, serif',
+  '"Times New Roman", serif',
+  '"Courier New", monospace',
+];
+
+function normalizeCustomStyles(customStyles: CustomStyles): CustomStyles {
+  const normalized: CustomStyles = {};
+  const backgroundColor = customStyles.backgroundColor?.trim();
+  const textColor = customStyles.textColor?.trim();
+  const fontSize = customStyles.fontSize?.trim();
+  const fontFamily = customStyles.fontFamily?.trim();
+  const customCSS = customStyles.customCSS?.trim();
+  if (backgroundColor) normalized.backgroundColor = backgroundColor;
+  if (textColor) normalized.textColor = textColor;
+  if (fontSize) normalized.fontSize = fontSize;
+  if (fontFamily) normalized.fontFamily = fontFamily;
+  if (customCSS) normalized.customCSS = customCSS;
+  return normalized;
+}
+
+function customStylesEqual(a: CustomStyles, b: CustomStyles): boolean {
+  const normalizedA = normalizeCustomStyles(a);
+  const normalizedB = normalizeCustomStyles(b);
+  return (
+    normalizedA.backgroundColor === normalizedB.backgroundColor &&
+    normalizedA.textColor === normalizedB.textColor &&
+    normalizedA.fontSize === normalizedB.fontSize &&
+    normalizedA.fontFamily === normalizedB.fontFamily &&
+    normalizedA.customCSS === normalizedB.customCSS
+  );
+}
+
+function isGrapesPreferences(value: unknown): value is GrapesPreferences {
+  if (!value || typeof value !== 'object') return false;
+  if (
+    !('globalMode' in value) ||
+    !('siteSettings' in value) ||
+    !('customStylesEnabled' in value) ||
+    !('customStyles' in value) ||
+    !('suppressedNotificationDomains' in value) ||
+    !('onboardingComplete' in value) ||
+    !('loggingEnabled' in value)
+  ) {
+    return false;
+  }
+  const prefs = value as GrapesPreferences;
+  const validMode =
+    prefs.globalMode === 'full' ||
+    prefs.globalMode === 'detection-only' ||
+    prefs.globalMode === 'disabled';
+  const validSiteSettings =
+    !!prefs.siteSettings &&
+    Object.values(prefs.siteSettings).every(
+      (setting) => setting === 'enabled' || setting === 'disabled' || setting === 'default',
+    );
+  const validStyles =
+    !!prefs.customStyles &&
+    Object.entries(prefs.customStyles).every(
+      ([key, styleValue]) =>
+        ['backgroundColor', 'textColor', 'fontSize', 'fontFamily', 'customCSS'].includes(key) &&
+        typeof styleValue === 'string',
+    );
+  return (
+    validMode &&
+    validSiteSettings &&
+    typeof prefs.customStylesEnabled === 'boolean' &&
+    validStyles &&
+    Array.isArray(prefs.suppressedNotificationDomains) &&
+    prefs.suppressedNotificationDomains.every((domain) => typeof domain === 'string') &&
+    typeof prefs.onboardingComplete === 'boolean' &&
+    typeof prefs.loggingEnabled === 'boolean'
+  );
+}
 
 // Utility functions
 function extractDomain(url: string): string {
@@ -116,6 +205,7 @@ function TabNav({ currentTab, onTabChange }: TabNavProps) {
     { id: 'activity', label: '🔬 Activity' },
     { id: 'settings', label: '⚙️ Settings' },
     { id: 'muted', label: '🔕 Muted' },
+    { id: 'styles', label: '🎨 Styles' },
   ];
 
   return (
@@ -250,6 +340,7 @@ interface SettingsTabProps {
   onModeChange: (mode: 'full' | 'detection-only' | 'disabled') => void;
   onSiteChange: (setting: 'enabled' | 'disabled' | 'default') => void;
   onLoggingChange: (enabled: boolean) => void;
+  onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<void>;
 }
 
 const MODE_OPTIONS: { value: 'full' | 'detection-only' | 'disabled'; label: string }[] = [
@@ -270,9 +361,12 @@ function SettingsTab({
   onModeChange,
   onSiteChange,
   onLoggingChange,
+  onPreferencesUpdate,
 }: SettingsTabProps) {
   const override = preferences.siteSettings[currentDomain] || null;
   const siteActive: 'enabled' | 'disabled' | 'default' = override || 'default';
+  const [importError, setImportError] = useState('');
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   async function handleExportLogs() {
     try {
@@ -307,6 +401,55 @@ function SettingsTab({
     if (tab?.id) {
       await browser.tabs.sendMessage(tab.id, { type: 'RUN_STEALTH_TEST' });
       window.close();
+    }
+  }
+
+  async function handleExportSettings() {
+    try {
+      const exportDate = new Date().toISOString().split('T')[0];
+      const json = JSON.stringify(preferences, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `grapes-settings-${exportDate}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Settings export failed:', e);
+      alert('Failed to export settings');
+    }
+  }
+
+  async function handleImportSettings(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const content = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(content);
+      } catch {
+        setImportError('Invalid JSON format. Please ensure the file contains valid JSON data.');
+        return;
+      }
+      if (!isGrapesPreferences(parsed)) {
+        setImportError(
+          'Settings file structure is invalid. Please import a GRAPES settings export.',
+        );
+        return;
+      }
+      setImportError('');
+      await onPreferencesUpdate({
+        ...parsed,
+        customStyles: normalizeCustomStyles(parsed.customStyles || {}),
+      });
+      alert('Settings imported successfully');
+    } catch (e) {
+      console.error('Settings import failed:', e);
+      setImportError('Failed to import settings file due to a read or processing error.');
     }
   }
 
@@ -357,9 +500,226 @@ function SettingsTab({
         <div className="setting-hint">Export logs as JSON for MongoDB import or analysis</div>
       </div>
 
+      <div className="setting-section">
+        <div className="setting-label">Preferences</div>
+        <div className="btn-row">
+          <button type="button" className="secondary-btn" onClick={handleExportSettings}>
+            💾 Export Settings
+          </button>
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={() => importInputRef.current?.click()}
+          >
+            📤 Import Settings
+          </button>
+        </div>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".json,application/json"
+          onChange={handleImportSettings}
+          style={{ display: 'none' }}
+        />
+        {importError && <div className="setting-error">{importError}</div>}
+      </div>
+
       <button type="button" className="primary-btn" onClick={handleStealthTest}>
         🔬 Run Stealth Test
       </button>
+    </div>
+  );
+}
+
+// --- Styles Tab Component ---
+interface StylesTabProps {
+  preferences: GrapesPreferences;
+  onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<void>;
+}
+
+function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
+  const [customStylesEnabled, setCustomStylesEnabled] = useState(preferences.customStylesEnabled);
+  const [customStyles, setCustomStyles] = useState<CustomStyles>(
+    normalizeCustomStyles(preferences.customStyles),
+  );
+
+  useEffect(() => {
+    setCustomStylesEnabled(preferences.customStylesEnabled);
+    setCustomStyles(normalizeCustomStyles(preferences.customStyles));
+  }, [preferences]);
+
+  async function handleApply() {
+    await onPreferencesUpdate({
+      ...preferences,
+      customStylesEnabled,
+      customStyles: normalizeCustomStyles(customStyles),
+    });
+  }
+
+  async function handleReset() {
+    const resetPreferences: GrapesPreferences = {
+      ...preferences,
+      customStylesEnabled: false,
+      customStyles: {},
+    };
+    setCustomStylesEnabled(resetPreferences.customStylesEnabled);
+    setCustomStyles(resetPreferences.customStyles);
+    await onPreferencesUpdate(resetPreferences);
+  }
+
+  async function handleThemeSelect(themeStyles: CustomStyles) {
+    const nextStyles = normalizeCustomStyles(themeStyles);
+    setCustomStylesEnabled(true);
+    setCustomStyles(nextStyles);
+    await onPreferencesUpdate({
+      ...preferences,
+      customStylesEnabled: true,
+      customStyles: nextStyles,
+    });
+  }
+
+  async function handlePresetApply(presetStyles: CustomStyles) {
+    const mergedStyles = normalizeCustomStyles({
+      ...customStyles,
+      ...presetStyles,
+    });
+    setCustomStylesEnabled(true);
+    setCustomStyles(mergedStyles);
+    await onPreferencesUpdate({
+      ...preferences,
+      customStylesEnabled: true,
+      customStyles: mergedStyles,
+    });
+  }
+
+  const activeStyles = normalizeCustomStyles(preferences.customStyles);
+
+  return (
+    <div className="tab-content">
+      <div className="setting-section">
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={customStylesEnabled}
+            onChange={(e) => setCustomStylesEnabled(e.target.checked)}
+          />
+          <span>Enable custom styles</span>
+        </label>
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">Themes</div>
+        <div className="theme-grid">
+          {BUILT_IN_THEMES.map((theme) => (
+            <button
+              key={theme.id}
+              type="button"
+              className={`theme-card ${customStylesEqual(activeStyles, theme.styles) ? 'active' : ''}`}
+              onClick={() => handleThemeSelect(theme.styles)}
+            >
+              <span className="theme-icon">{theme.icon}</span>
+              <span className="theme-name">{theme.name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">♿ Accessibility</div>
+        <div className="preset-grid">
+          {ACCESSIBILITY_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              className="secondary-btn"
+              onClick={() => handlePresetApply(preset.styles)}
+            >
+              {preset.icon} {preset.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">Background Color</div>
+        <input
+          type="color"
+          aria-label="Background color"
+          value={customStyles.backgroundColor || '#ffffff'}
+          onChange={(e) =>
+            setCustomStyles((prev) => ({ ...prev, backgroundColor: e.target.value }))
+          }
+        />
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">Text Color</div>
+        <input
+          type="color"
+          aria-label="Text color"
+          value={customStyles.textColor || '#000000'}
+          onChange={(e) => setCustomStyles((prev) => ({ ...prev, textColor: e.target.value }))}
+        />
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">Font Size: {customStyles.fontSize || '16'}px</div>
+        <input
+          type="range"
+          aria-label="Font size"
+          min="10"
+          max="32"
+          value={customStyles.fontSize || '16'}
+          onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontSize: e.target.value }))}
+          className="style-range"
+        />
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">Font Family</div>
+        <input
+          type="text"
+          aria-label="Font family"
+          value={customStyles.fontFamily || ''}
+          onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontFamily: e.target.value }))}
+          placeholder="e.g. Arial, sans-serif"
+          className="style-input"
+        />
+        <select
+          aria-label="Font family presets"
+          value={customStyles.fontFamily || ''}
+          onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontFamily: e.target.value }))}
+          className="style-input"
+        >
+          <option value="">Select a preset font...</option>
+          {FONT_PRESETS.map((font) => (
+            <option key={font} value={font}>
+              {font}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">Custom CSS</div>
+        <textarea
+          aria-label="Custom CSS"
+          rows={4}
+          value={customStyles.customCSS || ''}
+          onChange={(e) => setCustomStyles((prev) => ({ ...prev, customCSS: e.target.value }))}
+          placeholder="body { line-height: 1.6 !important; }"
+          className="style-textarea"
+        />
+      </div>
+
+      <div className="btn-row">
+        <button type="button" className="secondary-btn" onClick={handleReset}>
+          ↺ Reset to Default
+        </button>
+        <button type="button" className="primary-btn apply-btn" onClick={handleApply}>
+          ✅ Apply
+        </button>
+      </div>
     </div>
   );
 }
@@ -417,15 +777,7 @@ function PopupApp() {
 
       try {
         const prefsResult = await browser.runtime.sendMessage({ type: 'GET_PREFERENCES' });
-        const prefs: GrapesPreferences = prefsResult || {
-          globalMode: 'detection-only',
-          siteSettings: {},
-          customStylesEnabled: false,
-          customStyles: {},
-          suppressedNotificationDomains: [],
-          onboardingComplete: false,
-          loggingEnabled: true,
-        };
+        const prefs: GrapesPreferences = prefsResult || DEFAULT_PREFERENCES;
         setPreferences(prefs);
         console.log('[GRAPES Popup] Preferences loaded:', prefs);
 
@@ -540,6 +892,11 @@ function PopupApp() {
     );
   }
 
+  async function handlePreferencesUpdate(nextPreferences: GrapesPreferences) {
+    await browser.runtime.sendMessage({ type: 'SET_PREFERENCES', preferences: nextPreferences });
+    setPreferences(nextPreferences);
+  }
+
   if (!preferences) {
     return <div className="popup-container loading">Loading...</div>;
   }
@@ -570,6 +927,7 @@ function PopupApp() {
           onModeChange={handleModeChange}
           onSiteChange={handleSiteChange}
           onLoggingChange={handleLoggingChange}
+          onPreferencesUpdate={handlePreferencesUpdate}
         />
       )}
       {currentTab === 'muted' && (
@@ -577,6 +935,9 @@ function PopupApp() {
           domains={preferences.suppressedNotificationDomains}
           onRemove={handleRemoveMuted}
         />
+      )}
+      {currentTab === 'styles' && (
+        <StylesTab preferences={preferences} onPreferencesUpdate={handlePreferencesUpdate} />
       )}
     </div>
   );
