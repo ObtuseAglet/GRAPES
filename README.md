@@ -78,7 +78,7 @@ GRAPES/
 │   ├── content.ts          # Content script for page modification
 │   └── popup/
 │       ├── index.html      # Popup HTML template
-│       └── main.tsx        # Popup React component
+│       └── main.ts         # Popup TypeScript (vanilla; React migration planned)
 ├── assets/
 │   └── popup.css          # Popup styles
 ├── public/
