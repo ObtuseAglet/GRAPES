@@ -357,7 +357,7 @@ An advanced tool to help users target specific elements with CSS.
      test: { environment: 'jsdom', globals: true },
    });
    ```
-4. Add `tests/` directory to `tsconfig.json` `include` array.
+4. Add `tests/` directory to `tsconfig.json` `include` array and to `biome.json` `files` globs (e.g. add `"tests/**"`).
 
 ---
 
