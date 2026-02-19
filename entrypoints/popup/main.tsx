@@ -66,6 +66,38 @@ const FONT_PRESETS = [
   '"Courier New", monospace',
 ];
 
+const ALLOWED_STYLE_KEYS = [
+  'backgroundColor',
+  'textColor',
+  'fontSize',
+  'fontFamily',
+  'customCSS',
+] as const;
+const MIN_FONT_SIZE = 10;
+const MAX_FONT_SIZE = 32;
+const HEX_COLOR_PATTERN = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/;
+const FONT_FAMILY_PATTERN = /^[a-zA-Z0-9\s,'"()-]+$/;
+
+function isValidColor(value: string): boolean {
+  return HEX_COLOR_PATTERN.test(value);
+}
+
+function normalizeFontSize(value: string): string | undefined {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return;
+  const clamped = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, parsed));
+  return String(clamped);
+}
+
+function isValidFontFamily(value: string): boolean {
+  return FONT_FAMILY_PATTERN.test(value);
+}
+
+function isSafeCustomCss(value: string): boolean {
+  const lowerValue = value.toLowerCase();
+  return !lowerValue.includes('</style') && !lowerValue.includes('javascript:');
+}
+
 function normalizeCustomStyles(customStyles: CustomStyles): CustomStyles {
   const normalized: CustomStyles = {};
   const backgroundColor = customStyles.backgroundColor?.trim();
@@ -73,11 +105,15 @@ function normalizeCustomStyles(customStyles: CustomStyles): CustomStyles {
   const fontSize = customStyles.fontSize?.trim();
   const fontFamily = customStyles.fontFamily?.trim();
   const customCSS = customStyles.customCSS?.trim();
-  if (backgroundColor) normalized.backgroundColor = backgroundColor;
-  if (textColor) normalized.textColor = textColor;
-  if (fontSize) normalized.fontSize = fontSize;
-  if (fontFamily) normalized.fontFamily = fontFamily;
-  if (customCSS) normalized.customCSS = customCSS;
+  if (backgroundColor && isValidColor(backgroundColor))
+    normalized.backgroundColor = backgroundColor;
+  if (textColor && isValidColor(textColor)) normalized.textColor = textColor;
+  if (fontSize) {
+    const normalizedFontSize = normalizeFontSize(fontSize);
+    if (normalizedFontSize) normalized.fontSize = normalizedFontSize;
+  }
+  if (fontFamily && isValidFontFamily(fontFamily)) normalized.fontFamily = fontFamily;
+  if (customCSS && isSafeCustomCss(customCSS)) normalized.customCSS = customCSS;
   return normalized;
 }
 
@@ -118,11 +154,24 @@ function isGrapesPreferences(value: unknown): value is GrapesPreferences {
     );
   const validStyles =
     !!prefs.customStyles &&
-    Object.entries(prefs.customStyles).every(
-      ([key, styleValue]) =>
-        ['backgroundColor', 'textColor', 'fontSize', 'fontFamily', 'customCSS'].includes(key) &&
-        typeof styleValue === 'string',
-    );
+    Object.entries(prefs.customStyles).every(([key, styleValue]) => {
+      if (!ALLOWED_STYLE_KEYS.includes(key as (typeof ALLOWED_STYLE_KEYS)[number])) return false;
+      if (typeof styleValue !== 'string') return false;
+      if ((key === 'backgroundColor' || key === 'textColor') && !isValidColor(styleValue.trim())) {
+        return false;
+      }
+      if (key === 'fontSize') {
+        const parsed = Number.parseInt(styleValue.trim(), 10);
+        return Number.isFinite(parsed) && parsed >= MIN_FONT_SIZE && parsed <= MAX_FONT_SIZE;
+      }
+      if (key === 'fontFamily' && !isValidFontFamily(styleValue.trim())) {
+        return false;
+      }
+      if (key === 'customCSS' && !isSafeCustomCss(styleValue.trim())) {
+        return false;
+      }
+      return true;
+    });
   return (
     validMode &&
     validSiteSettings &&
@@ -340,7 +389,7 @@ interface SettingsTabProps {
   onModeChange: (mode: 'full' | 'detection-only' | 'disabled') => void;
   onSiteChange: (setting: 'enabled' | 'disabled' | 'default') => void;
   onLoggingChange: (enabled: boolean) => void;
-  onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<void>;
+  onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<boolean>;
 }
 
 const MODE_OPTIONS: { value: 'full' | 'detection-only' | 'disabled'; label: string }[] = [
@@ -365,7 +414,10 @@ function SettingsTab({
 }: SettingsTabProps) {
   const override = preferences.siteSettings[currentDomain] || null;
   const siteActive: 'enabled' | 'disabled' | 'default' = override || 'default';
-  const [importError, setImportError] = useState('');
+  const [settingsStatus, setSettingsStatus] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   async function handleExportLogs() {
@@ -415,9 +467,10 @@ function SettingsTab({
       a.download = `grapes-settings-${exportDate}.json`;
       a.click();
       URL.revokeObjectURL(url);
+      setSettingsStatus({ type: 'success', text: 'Settings exported successfully.' });
     } catch (e) {
       console.error('Settings export failed:', e);
-      alert('Failed to export settings');
+      setSettingsStatus({ type: 'error', text: 'Failed to export settings' });
     }
   }
 
@@ -432,24 +485,40 @@ function SettingsTab({
       try {
         parsed = JSON.parse(content);
       } catch {
-        setImportError('Invalid JSON format. Please ensure the file contains valid JSON data.');
+        setSettingsStatus({
+          type: 'error',
+          text: 'Invalid JSON format. Please ensure the file contains valid JSON data.',
+        });
         return;
       }
       if (!isGrapesPreferences(parsed)) {
-        setImportError(
-          'Settings file structure is invalid. Please import a GRAPES settings export.',
-        );
+        setSettingsStatus({
+          type: 'error',
+          text: 'Settings file structure is invalid. Please import a GRAPES settings export.',
+        });
         return;
       }
-      setImportError('');
-      await onPreferencesUpdate({
+      const updated = await onPreferencesUpdate({
         ...parsed,
         customStyles: normalizeCustomStyles(parsed.customStyles || {}),
       });
-      alert('Settings imported successfully');
+      if (!updated) {
+        setSettingsStatus({
+          type: 'error',
+          text: 'Failed to apply imported settings. Please try again.',
+        });
+        return;
+      }
+      setSettingsStatus({
+        type: 'success',
+        text: 'Settings imported successfully.',
+      });
     } catch (e) {
       console.error('Settings import failed:', e);
-      setImportError('Failed to import settings file due to a read or processing error.');
+      setSettingsStatus({
+        type: 'error',
+        text: 'Failed to import settings file due to a read or processing error.',
+      });
     }
   }
 
@@ -521,7 +590,9 @@ function SettingsTab({
           onChange={handleImportSettings}
           style={{ display: 'none' }}
         />
-        {importError && <div className="setting-error">{importError}</div>}
+        {settingsStatus && (
+          <div className={`setting-feedback ${settingsStatus.type}`}>{settingsStatus.text}</div>
+        )}
       </div>
 
       <button type="button" className="primary-btn" onClick={handleStealthTest}>
@@ -534,7 +605,7 @@ function SettingsTab({
 // --- Styles Tab Component ---
 interface StylesTabProps {
   preferences: GrapesPreferences;
-  onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<void>;
+  onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<boolean>;
 }
 
 function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
@@ -562,20 +633,24 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
       customStylesEnabled: false,
       customStyles: {},
     };
-    setCustomStylesEnabled(resetPreferences.customStylesEnabled);
-    setCustomStyles(resetPreferences.customStyles);
-    await onPreferencesUpdate(resetPreferences);
+    if (await onPreferencesUpdate(resetPreferences)) {
+      setCustomStylesEnabled(resetPreferences.customStylesEnabled);
+      setCustomStyles(resetPreferences.customStyles);
+    }
   }
 
   async function handleThemeSelect(themeStyles: CustomStyles) {
     const nextStyles = normalizeCustomStyles(themeStyles);
-    setCustomStylesEnabled(true);
-    setCustomStyles(nextStyles);
-    await onPreferencesUpdate({
-      ...preferences,
-      customStylesEnabled: true,
-      customStyles: nextStyles,
-    });
+    if (
+      await onPreferencesUpdate({
+        ...preferences,
+        customStylesEnabled: true,
+        customStyles: nextStyles,
+      })
+    ) {
+      setCustomStylesEnabled(true);
+      setCustomStyles(nextStyles);
+    }
   }
 
   async function handlePresetApply(presetStyles: CustomStyles) {
@@ -583,13 +658,16 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
       ...customStyles,
       ...presetStyles,
     });
-    setCustomStylesEnabled(true);
-    setCustomStyles(mergedStyles);
-    await onPreferencesUpdate({
-      ...preferences,
-      customStylesEnabled: true,
-      customStyles: mergedStyles,
-    });
+    if (
+      await onPreferencesUpdate({
+        ...preferences,
+        customStylesEnabled: true,
+        customStyles: mergedStyles,
+      })
+    ) {
+      setCustomStylesEnabled(true);
+      setCustomStyles(mergedStyles);
+    }
   }
 
   const activeStyles = normalizeCustomStyles(preferences.customStyles);
@@ -641,10 +719,12 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
       </div>
 
       <div className="setting-section">
-        <div className="setting-label">Background Color</div>
+        <label htmlFor="styles-background-color" className="setting-label">
+          Background Color
+        </label>
         <input
+          id="styles-background-color"
           type="color"
-          aria-label="Background color"
           value={customStyles.backgroundColor || '#ffffff'}
           onChange={(e) =>
             setCustomStyles((prev) => ({ ...prev, backgroundColor: e.target.value }))
@@ -653,20 +733,24 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
       </div>
 
       <div className="setting-section">
-        <div className="setting-label">Text Color</div>
+        <label htmlFor="styles-text-color" className="setting-label">
+          Text Color
+        </label>
         <input
+          id="styles-text-color"
           type="color"
-          aria-label="Text color"
           value={customStyles.textColor || '#000000'}
           onChange={(e) => setCustomStyles((prev) => ({ ...prev, textColor: e.target.value }))}
         />
       </div>
 
       <div className="setting-section">
-        <div className="setting-label">Font Size: {customStyles.fontSize || '16'}px</div>
+        <label htmlFor="styles-font-size" className="setting-label">
+          Font Size: {customStyles.fontSize || '16'}px
+        </label>
         <input
+          id="styles-font-size"
           type="range"
-          aria-label="Font size"
           min="10"
           max="32"
           value={customStyles.fontSize || '16'}
@@ -676,17 +760,20 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
       </div>
 
       <div className="setting-section">
-        <div className="setting-label">Font Family</div>
+        <label htmlFor="styles-font-family-input" className="setting-label">
+          Font Family
+        </label>
         <input
+          id="styles-font-family-input"
           type="text"
-          aria-label="Font family"
           value={customStyles.fontFamily || ''}
           onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontFamily: e.target.value }))}
           placeholder="e.g. Arial, sans-serif"
           className="style-input"
         />
         <select
-          aria-label="Font family presets"
+          id="styles-font-family-preset"
+          aria-label="Font family preset"
           value={customStyles.fontFamily || ''}
           onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontFamily: e.target.value }))}
           className="style-input"
@@ -701,15 +788,20 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
       </div>
 
       <div className="setting-section">
-        <div className="setting-label">Custom CSS</div>
+        <label htmlFor="styles-custom-css" className="setting-label">
+          Custom CSS
+        </label>
         <textarea
-          aria-label="Custom CSS"
+          id="styles-custom-css"
           rows={4}
           value={customStyles.customCSS || ''}
           onChange={(e) => setCustomStyles((prev) => ({ ...prev, customCSS: e.target.value }))}
           placeholder="body { line-height: 1.6 !important; }"
           className="style-textarea"
         />
+        <div className="setting-hint">
+          Custom CSS cannot include &lt;/style&gt; or javascript: values.
+        </div>
       </div>
 
       <div className="btn-row">
@@ -892,9 +984,15 @@ function PopupApp() {
     );
   }
 
-  async function handlePreferencesUpdate(nextPreferences: GrapesPreferences) {
-    await browser.runtime.sendMessage({ type: 'SET_PREFERENCES', preferences: nextPreferences });
-    setPreferences(nextPreferences);
+  async function handlePreferencesUpdate(nextPreferences: GrapesPreferences): Promise<boolean> {
+    try {
+      await browser.runtime.sendMessage({ type: 'SET_PREFERENCES', preferences: nextPreferences });
+      setPreferences(nextPreferences);
+      return true;
+    } catch (error) {
+      console.error('Failed to update preferences via SET_PREFERENCES message', error);
+      return false;
+    }
   }
 
   if (!preferences) {

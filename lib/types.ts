@@ -2,6 +2,7 @@
 export interface CustomStyles {
   backgroundColor?: string;
   textColor?: string;
+  /** Numeric pixel value stored as a unitless string (e.g. "16"); content script appends "px". */
   fontSize?: string;
   fontFamily?: string;
   customCSS?: string;
