@@ -1,10 +1,10 @@
 /**
  * GRAPES Stealth Test Runner
- * 
+ *
  * CRITICAL: Tests MUST run in the MAIN world because that's where the stealth
  * proxies operate. Content scripts run in an ISOLATED world with their own
  * prototype chain, so they see the real DOM methods, not our proxied ones.
- * 
+ *
  * Architecture:
  * - UI panel: runs in content script (isolated world) - safe for rendering
  * - Test logic: injected via <script> tag into MAIN world
@@ -229,14 +229,14 @@ export function injectStealthTest() {
   // Listen for test results from MAIN world via CustomEvent
   window.addEventListener('grapes-test-result', ((event: CustomEvent) => {
     const { testId, passed, logs } = event.detail;
-    
+
     // Update badge
     const badge = document.getElementById(`grapes-${testId}-badge`);
     if (badge) {
       badge.textContent = passed ? 'PASS' : 'FAIL';
       badge.className = `grapes-test-badge ${passed ? 'grapes-badge-pass' : 'grapes-badge-fail'}`;
     }
-    
+
     // Update logs
     const logEl = document.getElementById(`grapes-${testId}-log`);
     if (logEl) {
@@ -290,7 +290,7 @@ export function injectStealthTest() {
       score.textContent = '-/12';
       score.style.color = '#9b59b6';
     }
-    
+
     // Signal the MAIN world to run tests via CustomEvent
     window.dispatchEvent(new CustomEvent('grapes-run-tests'));
   });

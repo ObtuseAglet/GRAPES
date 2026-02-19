@@ -1,4 +1,5 @@
 import { injectStealthTest } from '../lib/stealth-tester';
+import type { CustomStyles } from '../lib/types';
 
 // ============================================================================
 // NOTIFICATION MANAGER - Handles stacking toast notifications
@@ -26,7 +27,7 @@ class NotificationManager {
   constructor() {
     // Get current domain
     this.currentDomain = this.extractDomain(window.location.hostname);
-    
+
     // Load suppressed domains from storage
     this.loadSuppressedDomains().then(() => {
       // Wait for DOM to be ready
@@ -46,19 +47,19 @@ class NotificationManager {
     if (hostname === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
       return hostname;
     }
-    
+
     // Extract last two parts for most domains (e.g., amazon.com)
     // Handle special cases like co.uk, com.br, etc.
     const parts = hostname.split('.');
     if (parts.length <= 2) return hostname;
-    
+
     // Check for known second-level TLDs
     const secondLevelTLDs = ['co.uk', 'com.br', 'com.au', 'co.jp', 'co.in', 'com.mx'];
     const lastTwo = parts.slice(-2).join('.');
     if (secondLevelTLDs.includes(lastTwo) && parts.length > 2) {
       return parts.slice(-3).join('.');
     }
-    
+
     return parts.slice(-2).join('.');
   }
 
@@ -103,10 +104,12 @@ class NotificationManager {
   async suppressCurrentDomain(): Promise<void> {
     this.suppressedDomains.add(this.currentDomain);
     await this.saveSuppressedDomains(this.currentDomain, true);
-    
+
     // Dismiss all current notifications
-    this.notifications.forEach((_, id) => this.dismiss(id));
-    
+    for (const id of this.notifications.keys()) {
+      this.dismiss(id);
+    }
+
     console.log(`[GRAPES] Notifications suppressed for ${this.currentDomain}`);
   }
 
@@ -130,17 +133,19 @@ class NotificationManager {
     this.createContainer();
     this.injectStyles();
     this.isReady = true;
-    
+
     // Process any pending notifications (if domain is not suppressed)
     if (!this.isDomainSuppressed()) {
-      this.pendingNotifications.forEach(n => this.show(n));
+      for (const n of this.pendingNotifications) {
+        this.show(n);
+      }
     }
     this.pendingNotifications = [];
   }
 
   private createContainer() {
     if (this.container) return;
-    
+
     this.container = document.createElement('div');
     this.container.id = 'grapes-notification-container';
     this.container.setAttribute('data-grapes-injected', 'true');
@@ -161,7 +166,7 @@ class NotificationManager {
 
   private injectStyles() {
     if (this.stylesInjected) return;
-    
+
     const styleSheet = document.createElement('style');
     styleSheet.id = 'grapes-notification-styles';
     styleSheet.setAttribute('data-grapes-injected', 'true');
@@ -299,7 +304,10 @@ class NotificationManager {
 
     // If not ready, queue for later
     if (!this.isReady || !this.container) {
-      console.log('[GRAPES] NotificationManager not ready, will show after init. Current threatCount:', this.threatCount);
+      console.log(
+        '[GRAPES] NotificationManager not ready, will show after init. Current threatCount:',
+        this.threatCount,
+      );
       // Store state for showing after init
       const currentCount = this.threatCount; // Capture current count
       const showAfterInit = () => {
@@ -333,7 +341,7 @@ class NotificationManager {
       <div class="grapes-notif-header">
         <div class="grapes-notif-icon">${icon}</div>
         <div class="grapes-notif-content">
-          <div class="grapes-notif-title">${this.threatCount} Tracking Method${this.threatCount > 1 ? 's' : ''} ${statusText}</div>
+          <div class="grapes-notif-title" style="color: ${statusColor};">${this.threatCount} Tracking Method${this.threatCount > 1 ? 's' : ''} ${statusText}</div>
           <div class="grapes-notif-message">GRAPES is ${blocked ? 'protecting' : 'monitoring'} this page</div>
           <div class="grapes-notif-cta">Click extension icon for details</div>
         </div>
@@ -346,7 +354,11 @@ class NotificationManager {
     // User can click extension icon to see details
     notification.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
-      if (target.classList.contains('grapes-notif-close') || target.classList.contains('grapes-notif-suppress')) return;
+      if (
+        target.classList.contains('grapes-notif-close') ||
+        target.classList.contains('grapes-notif-suppress')
+      )
+        return;
       this.dismiss('grapes-summary');
     });
 
@@ -422,7 +434,7 @@ class NotificationManager {
 // Current protection mode for this page
 let currentProtectionMode: 'full' | 'detection-only' | 'disabled' = 'detection-only';
 let detectionThreatCount = 0;
-let detectedTypes: Set<string> = new Set(); // Track detected types to prevent duplicate counting
+const detectedTypes: Set<string> = new Set(); // Track detected types to prevent duplicate counting
 let notificationDebounceTimer: number | null = null;
 
 // Global notification manager instance
@@ -444,35 +456,40 @@ export default defineContentScript({
   runAt: 'document_start',
   main() {
     console.log('[GRAPES] Content script loaded');
-    
+
     // Get current protection mode for this site
     const currentDomain = extractDomainFromHostname(window.location.hostname);
-    
+
     // Helper to notify the MAIN world stealth script about protection mode
     const notifyProtectionMode = (enabled: boolean) => {
-      window.dispatchEvent(new CustomEvent('grapes-set-protection-mode', {
-        detail: JSON.stringify({ enabled }),
-      }));
+      window.dispatchEvent(
+        new CustomEvent('grapes-set-protection-mode', {
+          detail: JSON.stringify({ enabled }),
+        }),
+      );
     };
-    
-    browser.runtime.sendMessage({
-      type: 'GET_PROTECTION_STATUS',
-      domain: currentDomain,
-    }).then((status) => {
-      if (status) {
-        currentProtectionMode = status.mode;
-        console.log(`[GRAPES] Protection mode for ${currentDomain}: ${currentProtectionMode}`);
-        
-        // Notify the MAIN world stealth script whether protection should be enabled
-        const protectionEnabled = status.mode === 'full';
-        notifyProtectionMode(protectionEnabled);
-      }
-    }).catch((err) => {
-      console.log('[GRAPES] Could not get protection status:', err);
-      // Default to protection enabled on error
-      notifyProtectionMode(true);
-    });
-    
+
+    browser.runtime
+      .sendMessage({
+        type: 'GET_PROTECTION_STATUS',
+        domain: currentDomain,
+      })
+      .then((status) => {
+        if (status) {
+          currentProtectionMode = status.mode;
+          console.log(`[GRAPES] Protection mode for ${currentDomain}: ${currentProtectionMode}`);
+
+          // Notify the MAIN world stealth script whether protection should be enabled
+          const protectionEnabled = status.mode === 'full';
+          notifyProtectionMode(protectionEnabled);
+        }
+      })
+      .catch((err) => {
+        console.log('[GRAPES] Could not get protection status:', err);
+        // Default to protection enabled on error
+        notifyProtectionMode(true);
+      });
+
     // Listen for messages from popup/background
     browser.runtime.onMessage.addListener((message) => {
       if (message.type === 'RUN_STEALTH_TEST') {
@@ -485,7 +502,7 @@ export default defineContentScript({
       }
       return;
     });
-    
+
     // Handler for showing notifications based on mode
     const handleDetection = (type: string, showDetailedFn: () => void) => {
       if (currentProtectionMode === 'full') {
@@ -496,7 +513,9 @@ export default defineContentScript({
         if (!detectedTypes.has(type)) {
           detectedTypes.add(type);
           detectionThreatCount++;
-          console.log(`[GRAPES] Detection-only mode: new threat type '${type}', total count: ${detectionThreatCount}`);
+          console.log(
+            `[GRAPES] Detection-only mode: new threat type '${type}', total count: ${detectionThreatCount}`,
+          );
         }
         // Debounce showing the prompt to batch multiple detections
         if (notificationDebounceTimer) {
@@ -508,136 +527,146 @@ export default defineContentScript({
       }
       // If disabled, don't show any notifications
     };
-    
+
     // Listen for suspicious observation events from the stealth script (MAIN world)
     window.addEventListener('grapes-suspicious-observation', (event: Event) => {
       const customEvent = event as CustomEvent;
       try {
         const detail = JSON.parse(customEvent.detail);
         console.log('[GRAPES] Suspicious MutationObserver detected:', detail);
-        
+
         // Notify background script to update badge
-        browser.runtime.sendMessage({
-          type: 'SUSPICIOUS_OBSERVATION_DETECTED',
-          data: detail,
-        }).catch((err) => {
-          console.log('[GRAPES] Could not send message to background:', err);
-        });
-        
+        browser.runtime
+          .sendMessage({
+            type: 'SUSPICIOUS_OBSERVATION_DETECTED',
+            data: detail,
+          })
+          .catch((err) => {
+            console.log('[GRAPES] Could not send message to background:', err);
+          });
+
         // Show notification based on mode
         handleDetection('dom', () => getNotificationManager().showDomMonitoring(detail));
       } catch (e) {
         console.error('[GRAPES] Error parsing suspicious observation event:', e);
       }
     });
-    
+
     // Listen for session replay tool detection
     window.addEventListener('grapes-session-replay-detected', (event: Event) => {
       const customEvent = event as CustomEvent;
       try {
         const detail = JSON.parse(customEvent.detail);
         console.log('[GRAPES] Session replay tools detected:', detail);
-        
+
         // Notify background script to update badge with different icon
-        browser.runtime.sendMessage({
-          type: 'SESSION_REPLAY_DETECTED',
-          data: detail,
-        }).catch((err) => {
-          console.log('[GRAPES] Could not send message to background:', err);
-        });
-        
+        browser.runtime
+          .sendMessage({
+            type: 'SESSION_REPLAY_DETECTED',
+            data: detail,
+          })
+          .catch((err) => {
+            console.log('[GRAPES] Could not send message to background:', err);
+          });
+
         // Show notification based on mode
         handleDetection('replay', () => getNotificationManager().showSessionReplay(detail));
       } catch (e) {
         console.error('[GRAPES] Error parsing session replay event:', e);
       }
     });
-    
+
     // Listen for fingerprinting detection
     window.addEventListener('grapes-fingerprinting-detected', (event: Event) => {
       const customEvent = event as CustomEvent;
       try {
         const detail = JSON.parse(customEvent.detail);
         console.log('[GRAPES] Fingerprinting detected:', detail);
-        
+
         // Notify background script to update badge
-        browser.runtime.sendMessage({
-          type: 'FINGERPRINTING_DETECTED',
-          data: detail,
-        }).catch((err) => {
-          console.log('[GRAPES] Could not send message to background:', err);
-        });
-        
+        browser.runtime
+          .sendMessage({
+            type: 'FINGERPRINTING_DETECTED',
+            data: detail,
+          })
+          .catch((err) => {
+            console.log('[GRAPES] Could not send message to background:', err);
+          });
+
         // Show notification based on mode
         handleDetection('fingerprint', () => getNotificationManager().showFingerprinting(detail));
       } catch (e) {
         console.error('[GRAPES] Error parsing fingerprinting event:', e);
       }
     });
-    
+
     // Listen for visibility tracking detection
     window.addEventListener('grapes-visibility-tracking-detected', (event: Event) => {
       const customEvent = event as CustomEvent;
       try {
         const detail = JSON.parse(customEvent.detail);
         console.log('[GRAPES] Visibility tracking detected:', detail);
-        
+
         // Notify background script to update badge
-        browser.runtime.sendMessage({
-          type: 'VISIBILITY_TRACKING_DETECTED',
-          data: detail,
-        }).catch((err) => {
-          console.log('[GRAPES] Could not send message to background:', err);
-        });
-        
+        browser.runtime
+          .sendMessage({
+            type: 'VISIBILITY_TRACKING_DETECTED',
+            data: detail,
+          })
+          .catch((err) => {
+            console.log('[GRAPES] Could not send message to background:', err);
+          });
+
         // Show notification based on mode
         handleDetection('visibility', () => getNotificationManager().showVisibilityTracking());
       } catch (e) {
         console.error('[GRAPES] Error parsing visibility tracking event:', e);
       }
     });
-    
+
     // Listen for tracking pixel detection
     window.addEventListener('grapes-tracking-pixel-detected', (event: Event) => {
       const customEvent = event as CustomEvent;
       try {
         const detail = JSON.parse(customEvent.detail);
         console.log('[GRAPES] Tracking pixels detected:', detail);
-        
+
         // Notify background script to update badge
-        browser.runtime.sendMessage({
-          type: 'TRACKING_PIXEL_DETECTED',
-          data: detail,
-        }).catch((err) => {
-          console.log('[GRAPES] Could not send message to background:', err);
-        });
-        
+        browser.runtime
+          .sendMessage({
+            type: 'TRACKING_PIXEL_DETECTED',
+            data: detail,
+          })
+          .catch((err) => {
+            console.log('[GRAPES] Could not send message to background:', err);
+          });
+
         // Show notification based on mode
         handleDetection('tracking', () => getNotificationManager().showTrackingPixel(detail));
       } catch (e) {
         console.error('[GRAPES] Error parsing tracking pixel event:', e);
       }
     });
-    
+
     // Wait for DOM to be ready before applying styles
     const applyWhenReady = () => {
       // Load user preferences
       browser.storage.sync.get(['preferences']).then((result) => {
         const preferences = result.preferences || {};
-        
+
         // Only apply custom styles if feature is enabled (disabled by default)
         if (preferences.customStylesEnabled && preferences.customStyles) {
           applyCustomStyles(preferences.customStyles);
         }
       });
     };
-    
+
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', applyWhenReady);
     } else {
       applyWhenReady();
     }
-    
+
     // Listen for preference changes
     browser.storage.onChanged.addListener((changes, areaName) => {
       if (areaName === 'sync' && changes.preferences) {
@@ -660,16 +689,16 @@ function extractDomainFromHostname(hostname: string): string {
   if (hostname === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
     return hostname;
   }
-  
+
   const parts = hostname.split('.');
   if (parts.length <= 2) return hostname;
-  
+
   const secondLevelTLDs = ['co.uk', 'com.br', 'com.au', 'co.jp', 'co.in', 'com.mx'];
   const lastTwo = parts.slice(-2).join('.');
   if (secondLevelTLDs.includes(lastTwo) && parts.length > 2) {
     return parts.slice(-3).join('.');
   }
-  
+
   return parts.slice(-2).join('.');
 }
 
@@ -677,45 +706,45 @@ function extractDomainFromHostname(hostname: string): string {
  * Apply custom styles to the current page
  * All GRAPES elements use 'grapes-' prefix for stealth detection
  */
-function applyCustomStyles(customStyles: Record<string, any>) {
+function applyCustomStyles(customStyles: CustomStyles) {
   // Remove existing custom styles
   removeCustomStyles();
-  
+
   // Create a style element for custom styles
   // ID starts with 'grapes-' so stealth-injector can identify it
   const styleElement = document.createElement('style');
   styleElement.id = 'grapes-custom-styles';
   styleElement.setAttribute('data-grapes-injected', 'true');
-  
+
   // Build CSS from preferences
   let cssRules = '';
-  
+
   // Example: Apply custom styles based on preferences
   // This can be extended based on specific website targeting and user preferences
   if (customStyles.backgroundColor) {
     cssRules += `body { background-color: ${customStyles.backgroundColor} !important; }\n`;
   }
-  
+
   if (customStyles.textColor) {
     cssRules += `body { color: ${customStyles.textColor} !important; }\n`;
   }
-  
+
   if (customStyles.fontSize) {
     cssRules += `body { font-size: ${customStyles.fontSize}px !important; }\n`;
   }
-  
+
   if (customStyles.fontFamily) {
     cssRules += `body { font-family: ${customStyles.fontFamily} !important; }\n`;
   }
-  
+
   // Add custom CSS rules if provided
   if (customStyles.customCSS) {
     cssRules += customStyles.customCSS;
   }
-  
+
   styleElement.textContent = cssRules;
   document.head.appendChild(styleElement);
-  
+
   console.log('[GRAPES] Custom styles applied');
 }
 
