@@ -1,15 +1,7 @@
 import { useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { browser } from 'wxt/browser';
-
-interface GrapesPreferences {
-  globalMode: 'full' | 'detection-only' | 'disabled';
-  siteSettings: Record<string, 'enabled' | 'disabled' | 'default'>;
-  customStylesEnabled: boolean;
-  customStyles: Record<string, any>;
-  suppressedNotificationDomains: string[];
-  onboardingComplete: boolean;
-}
+import type { GrapesPreferences } from '../../lib/types';
 
 // Onboarding step components
 function WelcomeStep({ onNext }: { onNext: () => void }) {
@@ -18,12 +10,13 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
       <div className="step-icon">🍇</div>
       <h1>Welcome to GRAPES</h1>
       <p className="step-subtitle">
-        <strong>G</strong>raphical <strong>R</strong>endering <strong>A</strong>lterations for <strong>P</strong>rivacy, <strong>E</strong>nhancement and <strong>S</strong>tealth
+        <strong>G</strong>raphical <strong>R</strong>endering <strong>A</strong>lterations for{' '}
+        <strong>P</strong>rivacy, <strong>E</strong>nhancement and <strong>S</strong>tealth
       </p>
       <div className="step-content">
         <p>
-          GRAPES protects your privacy by detecting and blocking invasive tracking technologies
-          that websites use to monitor your behavior.
+          GRAPES protects your privacy by detecting and blocking invasive tracking technologies that
+          websites use to monitor your behavior.
         </p>
         <div className="feature-list">
           <div className="feature-item">
@@ -56,19 +49,17 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
           </div>
         </div>
       </div>
-      <button className="primary-button" onClick={onNext}>
-        Get Started →
-      </button>
+      <button type="button" className="primary-button" onClick={onNext}></button>
     </div>
   );
 }
 
-function ModeSelectionStep({ 
-  selectedMode, 
-  onSelectMode, 
-  onNext, 
-  onBack 
-}: { 
+function ModeSelectionStep({
+  selectedMode,
+  onSelectMode,
+  onNext,
+  onBack,
+}: {
   selectedMode: 'full' | 'detection-only';
   onSelectMode: (mode: 'full' | 'detection-only') => void;
   onNext: () => void;
@@ -78,11 +69,10 @@ function ModeSelectionStep({
     <div className="onboarding-step">
       <div className="step-indicator">Step 1 of 2</div>
       <h2>Choose Your Protection Level</h2>
-      <p className="step-subtitle">
-        How would you like GRAPES to handle tracking?
-      </p>
+      <p className="step-subtitle">How would you like GRAPES to handle tracking?</p>
       <div className="mode-options">
-        <div 
+        <button
+          type="button"
           className={`mode-option ${selectedMode === 'detection-only' ? 'selected' : ''}`}
           onClick={() => onSelectMode('detection-only')}
         >
@@ -95,8 +85,9 @@ function ModeSelectionStep({
             <li>✓ Asks before enabling protection</li>
             <li>✓ Won't break any websites</li>
           </ul>
-        </div>
-        <div 
+        </button>
+        <button
+          type="button"
           className={`mode-option ${selectedMode === 'full' ? 'selected' : ''}`}
           onClick={() => onSelectMode('full')}
         >
@@ -109,13 +100,13 @@ function ModeSelectionStep({
             <li>✓ Silent protection in background</li>
             <li>⚠️ May break some site features</li>
           </ul>
-        </div>
+        </button>
       </div>
       <div className="button-row">
-        <button className="secondary-button" onClick={onBack}>
+        <button type="button" className="secondary-button" onClick={onBack}>
           ← Back
         </button>
-        <button className="primary-button" onClick={onNext}>
+        <button type="button" className="primary-button" onClick={onNext}>
           Continue →
         </button>
       </div>
@@ -127,7 +118,7 @@ function CustomStylesStep({
   enableCustomStyles,
   onToggleStyles,
   onFinish,
-  onBack
+  onBack,
 }: {
   enableCustomStyles: boolean;
   onToggleStyles: (enabled: boolean) => void;
@@ -138,12 +129,11 @@ function CustomStylesStep({
     <div className="onboarding-step">
       <div className="step-indicator">Step 2 of 2</div>
       <h2>Custom Page Styles</h2>
-      <p className="step-subtitle">
-        Would you like to customize how web pages look?
-      </p>
+      <p className="step-subtitle">Would you like to customize how web pages look?</p>
       <div className="step-content">
         <div className="style-options">
-          <div 
+          <button
+            type="button"
             className={`style-option ${!enableCustomStyles ? 'selected' : ''}`}
             onClick={() => onToggleStyles(false)}
           >
@@ -155,8 +145,9 @@ function CustomStylesStep({
               <p>Don't modify page appearance (recommended)</p>
               <p className="option-note">✓ Maximum stealth - pages won't detect GRAPES</p>
             </div>
-          </div>
-          <div 
+          </button>
+          <button
+            type="button"
             className={`style-option ${enableCustomStyles ? 'selected' : ''}`}
             onClick={() => onToggleStyles(true)}
           >
@@ -168,14 +159,14 @@ function CustomStylesStep({
               <p>Change colors, fonts, and inject custom CSS</p>
               <p className="option-note">⚠️ May be detectable by some websites</p>
             </div>
-          </div>
+          </button>
         </div>
       </div>
       <div className="button-row">
-        <button className="secondary-button" onClick={onBack}>
+        <button type="button" className="secondary-button" onClick={onBack}>
           ← Back
         </button>
-        <button className="primary-button finish-button" onClick={onFinish}>
+        <button type="button" className="primary-button finish-button" onClick={onFinish}>
           🎉 Start Using GRAPES
         </button>
       </div>
@@ -192,9 +183,7 @@ function CompletionStep() {
     <div className="onboarding-step completion">
       <div className="step-icon success">✓</div>
       <h1>You're All Set!</h1>
-      <p className="step-subtitle">
-        GRAPES is now protecting your privacy
-      </p>
+      <p className="step-subtitle">GRAPES is now protecting your privacy</p>
       <div className="completion-tips">
         <h3>Quick Tips:</h3>
         <ul>
@@ -205,11 +194,12 @@ function CompletionStep() {
             <strong>🔄 Change settings anytime</strong> from the extension popup
           </li>
           <li>
-            <strong>⚡ Per-site controls</strong> let you enable/disable protection for specific sites
+            <strong>⚡ Per-site controls</strong> let you enable/disable protection for specific
+            sites
           </li>
         </ul>
       </div>
-      <button className="primary-button" onClick={closeTab}>
+      <button type="button" className="primary-button" onClick={closeTab}>
         Close This Tab
       </button>
     </div>
@@ -230,6 +220,7 @@ function OnboardingApp() {
       customStyles: {},
       suppressedNotificationDomains: [],
       onboardingComplete: true,
+      loggingEnabled: true,
     };
 
     await browser.runtime.sendMessage({
@@ -238,7 +229,7 @@ function OnboardingApp() {
     });
 
     await browser.runtime.sendMessage({ type: 'COMPLETE_ONBOARDING' });
-    
+
     setStep(3);
   };
 
@@ -422,6 +413,9 @@ style.textContent = `
     cursor: pointer;
     transition: all 0.3s ease;
     text-align: left;
+    background: none;
+    font: inherit;
+    color: inherit;
   }
 
   .mode-option:hover {
@@ -482,6 +476,9 @@ style.textContent = `
     cursor: pointer;
     transition: all 0.3s ease;
     text-align: left;
+    background: none;
+    font: inherit;
+    color: inherit;
   }
 
   .style-option:hover {
@@ -627,4 +624,7 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-ReactDOM.createRoot(document.getElementById('root')!).render(<OnboardingApp />);
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  ReactDOM.createRoot(rootElement).render(<OnboardingApp />);
+}
