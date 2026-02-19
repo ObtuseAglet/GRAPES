@@ -49,7 +49,9 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
           </div>
         </div>
       </div>
-      <button type="button" className="primary-button" onClick={onNext}></button>
+      <button type="button" className="primary-button" onClick={onNext}>
+        Get Started →
+      </button>
     </div>
   );
 }
