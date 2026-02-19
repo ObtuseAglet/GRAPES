@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { browser } from 'wxt/browser';
 import { ButtonGroup } from '../../lib/components/ButtonGroup';
 import { EmptyState } from '../../lib/components/EmptyState';
 import { StatusBadge } from '../../lib/components/StatusBadge';
+import { ACCESSIBILITY_PRESETS, BUILT_IN_THEMES } from '../../lib/themes';
 import type {
+  CustomStyles,
   GrapesPreferences,
   SurveillanceData,
   SurveillanceEvent,
@@ -45,6 +47,142 @@ const THREATS: Record<string, { icon: string; label: string; color: string; desc
     desc: 'Cross-site tracking',
   },
 };
+
+const DEFAULT_PREFERENCES: GrapesPreferences = {
+  globalMode: 'detection-only',
+  siteSettings: {},
+  customStylesEnabled: false,
+  customStyles: {},
+  suppressedNotificationDomains: [],
+  onboardingComplete: false,
+  loggingEnabled: true,
+};
+
+const FONT_PRESETS = [
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  'Arial, sans-serif',
+  'Georgia, serif',
+  '"Times New Roman", serif',
+  '"Courier New", monospace',
+];
+
+const ALLOWED_STYLE_KEYS = [
+  'backgroundColor',
+  'textColor',
+  'fontSize',
+  'fontFamily',
+  'customCSS',
+] as const;
+const MIN_FONT_SIZE = 10;
+const MAX_FONT_SIZE = 32;
+const HEX_COLOR_PATTERN = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/;
+const FONT_FAMILY_PATTERN = /^[a-zA-Z0-9\s,'"()-]+$/;
+
+function isValidColor(value: string): boolean {
+  return HEX_COLOR_PATTERN.test(value);
+}
+
+function normalizeFontSize(value: string): string | undefined {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return;
+  const clamped = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, parsed));
+  return String(clamped);
+}
+
+function isValidFontFamily(value: string): boolean {
+  return FONT_FAMILY_PATTERN.test(value);
+}
+
+function isSafeCustomCss(value: string): boolean {
+  const lowerValue = value.toLowerCase();
+  return !lowerValue.includes('</style') && !lowerValue.includes('javascript:');
+}
+
+function normalizeCustomStyles(customStyles: CustomStyles): CustomStyles {
+  const normalized: CustomStyles = {};
+  const backgroundColor = customStyles.backgroundColor?.trim();
+  const textColor = customStyles.textColor?.trim();
+  const fontSize = customStyles.fontSize?.trim();
+  const fontFamily = customStyles.fontFamily?.trim();
+  const customCSS = customStyles.customCSS?.trim();
+  if (backgroundColor && isValidColor(backgroundColor))
+    normalized.backgroundColor = backgroundColor;
+  if (textColor && isValidColor(textColor)) normalized.textColor = textColor;
+  if (fontSize) {
+    const normalizedFontSize = normalizeFontSize(fontSize);
+    if (normalizedFontSize) normalized.fontSize = normalizedFontSize;
+  }
+  if (fontFamily && isValidFontFamily(fontFamily)) normalized.fontFamily = fontFamily;
+  if (customCSS && isSafeCustomCss(customCSS)) normalized.customCSS = customCSS;
+  return normalized;
+}
+
+function customStylesEqual(a: CustomStyles, b: CustomStyles): boolean {
+  const normalizedA = normalizeCustomStyles(a);
+  const normalizedB = normalizeCustomStyles(b);
+  return (
+    normalizedA.backgroundColor === normalizedB.backgroundColor &&
+    normalizedA.textColor === normalizedB.textColor &&
+    normalizedA.fontSize === normalizedB.fontSize &&
+    normalizedA.fontFamily === normalizedB.fontFamily &&
+    normalizedA.customCSS === normalizedB.customCSS
+  );
+}
+
+function isGrapesPreferences(value: unknown): value is GrapesPreferences {
+  if (!value || typeof value !== 'object') return false;
+  if (
+    !('globalMode' in value) ||
+    !('siteSettings' in value) ||
+    !('customStylesEnabled' in value) ||
+    !('customStyles' in value) ||
+    !('suppressedNotificationDomains' in value) ||
+    !('onboardingComplete' in value) ||
+    !('loggingEnabled' in value)
+  ) {
+    return false;
+  }
+  const prefs = value as GrapesPreferences;
+  const validMode =
+    prefs.globalMode === 'full' ||
+    prefs.globalMode === 'detection-only' ||
+    prefs.globalMode === 'disabled';
+  const validSiteSettings =
+    !!prefs.siteSettings &&
+    Object.values(prefs.siteSettings).every(
+      (setting) => setting === 'enabled' || setting === 'disabled' || setting === 'default',
+    );
+  const validStyles =
+    !!prefs.customStyles &&
+    Object.entries(prefs.customStyles).every(([key, styleValue]) => {
+      if (!ALLOWED_STYLE_KEYS.includes(key as (typeof ALLOWED_STYLE_KEYS)[number])) return false;
+      if (typeof styleValue !== 'string') return false;
+      if ((key === 'backgroundColor' || key === 'textColor') && !isValidColor(styleValue.trim())) {
+        return false;
+      }
+      if (key === 'fontSize') {
+        const parsed = Number.parseInt(styleValue.trim(), 10);
+        return Number.isFinite(parsed) && parsed >= MIN_FONT_SIZE && parsed <= MAX_FONT_SIZE;
+      }
+      if (key === 'fontFamily' && !isValidFontFamily(styleValue.trim())) {
+        return false;
+      }
+      if (key === 'customCSS' && !isSafeCustomCss(styleValue.trim())) {
+        return false;
+      }
+      return true;
+    });
+  return (
+    validMode &&
+    validSiteSettings &&
+    typeof prefs.customStylesEnabled === 'boolean' &&
+    validStyles &&
+    Array.isArray(prefs.suppressedNotificationDomains) &&
+    prefs.suppressedNotificationDomains.every((domain) => typeof domain === 'string') &&
+    typeof prefs.onboardingComplete === 'boolean' &&
+    typeof prefs.loggingEnabled === 'boolean'
+  );
+}
 
 // Utility functions
 function extractDomain(url: string): string {
@@ -116,6 +254,7 @@ function TabNav({ currentTab, onTabChange }: TabNavProps) {
     { id: 'activity', label: '🔬 Activity' },
     { id: 'settings', label: '⚙️ Settings' },
     { id: 'muted', label: '🔕 Muted' },
+    { id: 'styles', label: '🎨 Styles' },
   ];
 
   return (
@@ -250,6 +389,7 @@ interface SettingsTabProps {
   onModeChange: (mode: 'full' | 'detection-only' | 'disabled') => void;
   onSiteChange: (setting: 'enabled' | 'disabled' | 'default') => void;
   onLoggingChange: (enabled: boolean) => void;
+  onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<boolean>;
 }
 
 const MODE_OPTIONS: { value: 'full' | 'detection-only' | 'disabled'; label: string }[] = [
@@ -270,9 +410,15 @@ function SettingsTab({
   onModeChange,
   onSiteChange,
   onLoggingChange,
+  onPreferencesUpdate,
 }: SettingsTabProps) {
   const override = preferences.siteSettings[currentDomain] || null;
   const siteActive: 'enabled' | 'disabled' | 'default' = override || 'default';
+  const [settingsStatus, setSettingsStatus] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   async function handleExportLogs() {
     try {
@@ -307,6 +453,72 @@ function SettingsTab({
     if (tab?.id) {
       await browser.tabs.sendMessage(tab.id, { type: 'RUN_STEALTH_TEST' });
       window.close();
+    }
+  }
+
+  async function handleExportSettings() {
+    try {
+      const exportDate = new Date().toISOString().split('T')[0];
+      const json = JSON.stringify(preferences, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `grapes-settings-${exportDate}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setSettingsStatus({ type: 'success', text: 'Settings exported successfully.' });
+    } catch (e) {
+      console.error('Settings export failed:', e);
+      setSettingsStatus({ type: 'error', text: 'Failed to export settings' });
+    }
+  }
+
+  async function handleImportSettings(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const content = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(content);
+      } catch {
+        setSettingsStatus({
+          type: 'error',
+          text: 'Invalid JSON format. Please ensure the file contains valid JSON data.',
+        });
+        return;
+      }
+      if (!isGrapesPreferences(parsed)) {
+        setSettingsStatus({
+          type: 'error',
+          text: 'Settings file structure is invalid. Please import a GRAPES settings export.',
+        });
+        return;
+      }
+      const updated = await onPreferencesUpdate({
+        ...parsed,
+        customStyles: normalizeCustomStyles(parsed.customStyles || {}),
+      });
+      if (!updated) {
+        setSettingsStatus({
+          type: 'error',
+          text: 'Failed to apply imported settings. Please try again.',
+        });
+        return;
+      }
+      setSettingsStatus({
+        type: 'success',
+        text: 'Settings imported successfully.',
+      });
+    } catch (e) {
+      console.error('Settings import failed:', e);
+      setSettingsStatus({
+        type: 'error',
+        text: 'Failed to import settings file due to a read or processing error.',
+      });
     }
   }
 
@@ -357,9 +569,254 @@ function SettingsTab({
         <div className="setting-hint">Export logs as JSON for MongoDB import or analysis</div>
       </div>
 
+      <div className="setting-section">
+        <div className="setting-label">Preferences</div>
+        <div className="btn-row">
+          <button type="button" className="secondary-btn" onClick={handleExportSettings}>
+            💾 Export Settings
+          </button>
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={() => importInputRef.current?.click()}
+          >
+            📤 Import Settings
+          </button>
+        </div>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".json,application/json"
+          onChange={handleImportSettings}
+          style={{ display: 'none' }}
+        />
+        {settingsStatus && (
+          <div className={`setting-feedback ${settingsStatus.type}`}>{settingsStatus.text}</div>
+        )}
+      </div>
+
       <button type="button" className="primary-btn" onClick={handleStealthTest}>
         🔬 Run Stealth Test
       </button>
+    </div>
+  );
+}
+
+// --- Styles Tab Component ---
+interface StylesTabProps {
+  preferences: GrapesPreferences;
+  onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<boolean>;
+}
+
+function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
+  const [customStylesEnabled, setCustomStylesEnabled] = useState(preferences.customStylesEnabled);
+  const [customStyles, setCustomStyles] = useState<CustomStyles>(
+    normalizeCustomStyles(preferences.customStyles),
+  );
+
+  useEffect(() => {
+    setCustomStylesEnabled(preferences.customStylesEnabled);
+    setCustomStyles(normalizeCustomStyles(preferences.customStyles));
+  }, [preferences]);
+
+  async function handleApply() {
+    await onPreferencesUpdate({
+      ...preferences,
+      customStylesEnabled,
+      customStyles: normalizeCustomStyles(customStyles),
+    });
+  }
+
+  async function handleReset() {
+    const resetPreferences: GrapesPreferences = {
+      ...preferences,
+      customStylesEnabled: false,
+      customStyles: {},
+    };
+    if (await onPreferencesUpdate(resetPreferences)) {
+      setCustomStylesEnabled(resetPreferences.customStylesEnabled);
+      setCustomStyles(resetPreferences.customStyles);
+    }
+  }
+
+  async function handleThemeSelect(themeStyles: CustomStyles) {
+    const nextStyles = normalizeCustomStyles(themeStyles);
+    if (
+      await onPreferencesUpdate({
+        ...preferences,
+        customStylesEnabled: true,
+        customStyles: nextStyles,
+      })
+    ) {
+      setCustomStylesEnabled(true);
+      setCustomStyles(nextStyles);
+    }
+  }
+
+  async function handlePresetApply(presetStyles: CustomStyles) {
+    const mergedStyles = normalizeCustomStyles({
+      ...customStyles,
+      ...presetStyles,
+    });
+    if (
+      await onPreferencesUpdate({
+        ...preferences,
+        customStylesEnabled: true,
+        customStyles: mergedStyles,
+      })
+    ) {
+      setCustomStylesEnabled(true);
+      setCustomStyles(mergedStyles);
+    }
+  }
+
+  const activeStyles = normalizeCustomStyles(preferences.customStyles);
+
+  return (
+    <div className="tab-content">
+      <div className="setting-section">
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={customStylesEnabled}
+            onChange={(e) => setCustomStylesEnabled(e.target.checked)}
+          />
+          <span>Enable custom styles</span>
+        </label>
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">Themes</div>
+        <div className="theme-grid">
+          {BUILT_IN_THEMES.map((theme) => (
+            <button
+              key={theme.id}
+              type="button"
+              className={`theme-card ${customStylesEqual(activeStyles, theme.styles) ? 'active' : ''}`}
+              onClick={() => handleThemeSelect(theme.styles)}
+            >
+              <span className="theme-icon">{theme.icon}</span>
+              <span className="theme-name">{theme.name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">♿ Accessibility</div>
+        <div className="preset-grid">
+          {ACCESSIBILITY_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              className="secondary-btn"
+              onClick={() => handlePresetApply(preset.styles)}
+            >
+              {preset.icon} {preset.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="setting-section">
+        <label htmlFor="styles-background-color" className="setting-label">
+          Background Color
+        </label>
+        <input
+          id="styles-background-color"
+          type="color"
+          value={customStyles.backgroundColor || '#ffffff'}
+          onChange={(e) =>
+            setCustomStyles((prev) => ({ ...prev, backgroundColor: e.target.value }))
+          }
+        />
+      </div>
+
+      <div className="setting-section">
+        <label htmlFor="styles-text-color" className="setting-label">
+          Text Color
+        </label>
+        <input
+          id="styles-text-color"
+          type="color"
+          value={customStyles.textColor || '#000000'}
+          onChange={(e) => setCustomStyles((prev) => ({ ...prev, textColor: e.target.value }))}
+        />
+      </div>
+
+      <div className="setting-section">
+        <label htmlFor="styles-font-size" className="setting-label">
+          Font Size: {customStyles.fontSize || '16'}px
+        </label>
+        <input
+          id="styles-font-size"
+          type="range"
+          min="10"
+          max="32"
+          value={customStyles.fontSize || '16'}
+          onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontSize: e.target.value }))}
+          className="style-range"
+        />
+      </div>
+
+      <div className="setting-section">
+        <label htmlFor="styles-font-family-input" className="setting-label">
+          Font Family
+        </label>
+        <input
+          id="styles-font-family-input"
+          type="text"
+          value={customStyles.fontFamily || ''}
+          onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontFamily: e.target.value }))}
+          placeholder="e.g. Arial, sans-serif"
+          className="style-input"
+        />
+        <label htmlFor="styles-font-family-preset" className="setting-label style-sub-label">
+          Font Family Preset
+        </label>
+        <select
+          id="styles-font-family-preset"
+          value={customStyles.fontFamily || ''}
+          onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontFamily: e.target.value }))}
+          className="style-input"
+        >
+          <option value="">Select a preset font...</option>
+          {FONT_PRESETS.map((font) => (
+            <option key={font} value={font}>
+              {font}
+            </option>
+          ))}
+        </select>
+        <div className="setting-hint">
+          Font family allows letters, numbers, spaces, commas, quotes, parentheses, and hyphens.
+        </div>
+      </div>
+
+      <div className="setting-section">
+        <label htmlFor="styles-custom-css" className="setting-label">
+          Custom CSS
+        </label>
+        <textarea
+          id="styles-custom-css"
+          rows={4}
+          value={customStyles.customCSS || ''}
+          onChange={(e) => setCustomStyles((prev) => ({ ...prev, customCSS: e.target.value }))}
+          placeholder="body { line-height: 1.6 !important; }"
+          className="style-textarea"
+        />
+        <div className="setting-hint">
+          Custom CSS cannot include closing style tags or javascript: values.
+        </div>
+      </div>
+
+      <div className="btn-row">
+        <button type="button" className="secondary-btn" onClick={handleReset}>
+          ↺ Reset to Default
+        </button>
+        <button type="button" className="primary-btn apply-btn" onClick={handleApply}>
+          ✅ Apply
+        </button>
+      </div>
     </div>
   );
 }
@@ -417,15 +874,7 @@ function PopupApp() {
 
       try {
         const prefsResult = await browser.runtime.sendMessage({ type: 'GET_PREFERENCES' });
-        const prefs: GrapesPreferences = prefsResult || {
-          globalMode: 'detection-only',
-          siteSettings: {},
-          customStylesEnabled: false,
-          customStyles: {},
-          suppressedNotificationDomains: [],
-          onboardingComplete: false,
-          loggingEnabled: true,
-        };
+        const prefs: GrapesPreferences = prefsResult || DEFAULT_PREFERENCES;
         setPreferences(prefs);
         console.log('[GRAPES Popup] Preferences loaded:', prefs);
 
@@ -540,6 +989,17 @@ function PopupApp() {
     );
   }
 
+  async function handlePreferencesUpdate(nextPreferences: GrapesPreferences): Promise<boolean> {
+    try {
+      await browser.runtime.sendMessage({ type: 'SET_PREFERENCES', preferences: nextPreferences });
+      setPreferences(nextPreferences);
+      return true;
+    } catch (error) {
+      console.error('Failed to update preferences via SET_PREFERENCES message', error);
+      return false;
+    }
+  }
+
   if (!preferences) {
     return <div className="popup-container loading">Loading...</div>;
   }
@@ -570,6 +1030,7 @@ function PopupApp() {
           onModeChange={handleModeChange}
           onSiteChange={handleSiteChange}
           onLoggingChange={handleLoggingChange}
+          onPreferencesUpdate={handlePreferencesUpdate}
         />
       )}
       {currentTab === 'muted' && (
@@ -577,6 +1038,9 @@ function PopupApp() {
           domains={preferences.suppressedNotificationDomains}
           onRemove={handleRemoveMuted}
         />
+      )}
+      {currentTab === 'styles' && (
+        <StylesTab preferences={preferences} onPreferencesUpdate={handlePreferencesUpdate} />
       )}
     </div>
   );

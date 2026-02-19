@@ -350,6 +350,84 @@ body {
   border-color: #f5c6cb;
 }
 
+.setting-feedback {
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.setting-feedback.error {
+  color: #dc3545;
+}
+
+.setting-feedback.success {
+  color: #27ae60;
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.theme-card {
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-card.active {
+  border-color: #667eea;
+  background: #667eea10;
+}
+
+.theme-icon {
+  font-size: 16px;
+}
+
+.theme-name {
+  font-size: 12px;
+  color: #333;
+}
+
+.preset-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.style-input,
+.style-textarea {
+  width: 100%;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.style-sub-label {
+  display: block;
+  margin-top: 10px;
+}
+
+.style-textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.style-range {
+  width: 100%;
+}
+
+.apply-btn {
+  width: auto;
+}
+
 /* Muted sites tab */
 .muted-list {
   display: flex;
