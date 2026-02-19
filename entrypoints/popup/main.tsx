@@ -654,11 +654,14 @@ function StylesTab({ preferences, currentDomain, onPreferencesUpdate }: StylesTa
     }
   }, [preferences, currentDomain, saveScope]);
 
-  function buildNextPreferences(nextStyles: CustomStyles, nextEnabled: boolean): GrapesPreferences {
+  function buildNextPreferences(
+    nextStyles: CustomStyles,
+    customStylesFeatureEnabled: boolean,
+  ): GrapesPreferences {
     const normalizedStyles = normalizeCustomStyles(nextStyles);
     const nextPreferences: GrapesPreferences = {
       ...preferences,
-      customStylesEnabled: nextEnabled,
+      customStylesEnabled: customStylesFeatureEnabled,
       autoDarkMode,
       siteStyles: { ...preferences.siteStyles },
     };
