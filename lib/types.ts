@@ -16,7 +16,11 @@ export interface GrapesPreferences {
   siteSettings: Record<string, 'enabled' | 'disabled' | 'default'>;
   /** Custom styles feature (disabled by default) */
   customStylesEnabled: boolean;
+  /** Automatically apply dark theme when system dark mode is enabled */
+  autoDarkMode: boolean;
   customStyles: CustomStyles;
+  /** Per-site style overrides (domain -> style object) */
+  siteStyles: Record<string, CustomStyles>;
   /** Notification preferences */
   suppressedNotificationDomains: string[];
   /** Onboarding completed */

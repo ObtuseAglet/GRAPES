@@ -10,7 +10,9 @@ const DEFAULT_PREFERENCES: GrapesPreferences = {
   globalMode: 'detection-only', // Default to detection-only mode
   siteSettings: {},
   customStylesEnabled: false, // Disabled by default
+  autoDarkMode: false,
   customStyles: {},
+  siteStyles: {},
   suppressedNotificationDomains: [],
   onboardingComplete: false,
   loggingEnabled: true, // Logging enabled by default for local analysis
@@ -160,16 +162,30 @@ export default defineBackground(() => {
       // Migrate old preferences if needed
       browser.storage.sync.get(['preferences']).then((result) => {
         const oldPrefs = result.preferences;
-        if (oldPrefs && !('globalMode' in oldPrefs)) {
-          // Migrate from old format
-          const newPrefs: GrapesPreferences = {
-            ...DEFAULT_PREFERENCES,
-            customStylesEnabled: oldPrefs.enabled || false,
-            customStyles: oldPrefs.customStyles || {},
-            onboardingComplete: true, // Existing users don't need onboarding
-          };
-          browser.storage.sync.set({ preferences: newPrefs });
-          console.log('[GRAPES] Migrated preferences to new format');
+        if (oldPrefs) {
+          if (!('globalMode' in oldPrefs)) {
+            // Migrate from old format
+            const newPrefs: GrapesPreferences = {
+              ...DEFAULT_PREFERENCES,
+              customStylesEnabled: oldPrefs.enabled || false,
+              customStyles: oldPrefs.customStyles || {},
+              onboardingComplete: true, // Existing users don't need onboarding
+            };
+            browser.storage.sync.set({ preferences: newPrefs });
+            console.log('[GRAPES] Migrated preferences to new format');
+            return;
+          }
+
+          if (!('siteStyles' in oldPrefs) || !('autoDarkMode' in oldPrefs)) {
+            const newPrefs: GrapesPreferences = {
+              ...DEFAULT_PREFERENCES,
+              ...oldPrefs,
+              siteStyles: oldPrefs.siteStyles || {},
+              autoDarkMode: oldPrefs.autoDarkMode || false,
+            };
+            browser.storage.sync.set({ preferences: newPrefs });
+            console.log('[GRAPES] Added missing style preference fields');
+          }
         }
       });
     }

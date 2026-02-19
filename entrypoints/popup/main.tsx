@@ -52,7 +52,9 @@ const DEFAULT_PREFERENCES: GrapesPreferences = {
   globalMode: 'detection-only',
   siteSettings: {},
   customStylesEnabled: false,
+  autoDarkMode: false,
   customStyles: {},
+  siteStyles: {},
   suppressedNotificationDomains: [],
   onboardingComplete: false,
   loggingEnabled: true,
@@ -98,6 +100,28 @@ function isSafeCustomCss(value: string): boolean {
   return !lowerValue.includes('</style') && !lowerValue.includes('javascript:');
 }
 
+function isValidCustomStylesShape(styles: unknown): styles is CustomStyles {
+  if (!styles || typeof styles !== 'object') return false;
+  return Object.entries(styles).every(([key, styleValue]) => {
+    if (!ALLOWED_STYLE_KEYS.includes(key as (typeof ALLOWED_STYLE_KEYS)[number])) return false;
+    if (typeof styleValue !== 'string') return false;
+    if ((key === 'backgroundColor' || key === 'textColor') && !isValidColor(styleValue.trim())) {
+      return false;
+    }
+    if (key === 'fontSize') {
+      const parsed = Number.parseInt(styleValue.trim(), 10);
+      return Number.isFinite(parsed) && parsed >= MIN_FONT_SIZE && parsed <= MAX_FONT_SIZE;
+    }
+    if (key === 'fontFamily' && !isValidFontFamily(styleValue.trim())) {
+      return false;
+    }
+    if (key === 'customCSS' && !isSafeCustomCss(styleValue.trim())) {
+      return false;
+    }
+    return true;
+  });
+}
+
 function normalizeCustomStyles(customStyles: CustomStyles): CustomStyles {
   const normalized: CustomStyles = {};
   const backgroundColor = customStyles.backgroundColor?.trim();
@@ -135,7 +159,9 @@ function isGrapesPreferences(value: unknown): value is GrapesPreferences {
     !('globalMode' in value) ||
     !('siteSettings' in value) ||
     !('customStylesEnabled' in value) ||
+    !('autoDarkMode' in value) ||
     !('customStyles' in value) ||
+    !('siteStyles' in value) ||
     !('suppressedNotificationDomains' in value) ||
     !('onboardingComplete' in value) ||
     !('loggingEnabled' in value)
@@ -152,31 +178,17 @@ function isGrapesPreferences(value: unknown): value is GrapesPreferences {
     Object.values(prefs.siteSettings).every(
       (setting) => setting === 'enabled' || setting === 'disabled' || setting === 'default',
     );
-  const validStyles =
-    !!prefs.customStyles &&
-    Object.entries(prefs.customStyles).every(([key, styleValue]) => {
-      if (!ALLOWED_STYLE_KEYS.includes(key as (typeof ALLOWED_STYLE_KEYS)[number])) return false;
-      if (typeof styleValue !== 'string') return false;
-      if ((key === 'backgroundColor' || key === 'textColor') && !isValidColor(styleValue.trim())) {
-        return false;
-      }
-      if (key === 'fontSize') {
-        const parsed = Number.parseInt(styleValue.trim(), 10);
-        return Number.isFinite(parsed) && parsed >= MIN_FONT_SIZE && parsed <= MAX_FONT_SIZE;
-      }
-      if (key === 'fontFamily' && !isValidFontFamily(styleValue.trim())) {
-        return false;
-      }
-      if (key === 'customCSS' && !isSafeCustomCss(styleValue.trim())) {
-        return false;
-      }
-      return true;
-    });
+  const validStyles = isValidCustomStylesShape(prefs.customStyles);
+  const validSiteStyles =
+    !!prefs.siteStyles &&
+    Object.values(prefs.siteStyles).every((siteStyles) => isValidCustomStylesShape(siteStyles));
   return (
     validMode &&
     validSiteSettings &&
     typeof prefs.customStylesEnabled === 'boolean' &&
+    typeof prefs.autoDarkMode === 'boolean' &&
     validStyles &&
+    validSiteStyles &&
     Array.isArray(prefs.suppressedNotificationDomains) &&
     prefs.suppressedNotificationDomains.every((domain) => typeof domain === 'string') &&
     typeof prefs.onboardingComplete === 'boolean' &&
@@ -500,7 +512,14 @@ function SettingsTab({
       }
       const updated = await onPreferencesUpdate({
         ...parsed,
+        autoDarkMode: parsed.autoDarkMode || false,
         customStyles: normalizeCustomStyles(parsed.customStyles || {}),
+        siteStyles: Object.fromEntries(
+          Object.entries(parsed.siteStyles || {}).map(([domain, styles]) => [
+            domain,
+            normalizeCustomStyles(styles),
+          ]),
+        ),
       });
       if (!updated) {
         setSettingsStatus({
@@ -605,49 +624,83 @@ function SettingsTab({
 // --- Styles Tab Component ---
 interface StylesTabProps {
   preferences: GrapesPreferences;
+  currentDomain: string;
   onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<boolean>;
 }
 
-function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
+function StylesTab({ preferences, currentDomain, onPreferencesUpdate }: StylesTabProps) {
   const [customStylesEnabled, setCustomStylesEnabled] = useState(preferences.customStylesEnabled);
+  const [autoDarkMode, setAutoDarkMode] = useState(preferences.autoDarkMode);
+  const [saveScope, setSaveScope] = useState<'global' | 'site'>('global');
   const [customStyles, setCustomStyles] = useState<CustomStyles>(
     normalizeCustomStyles(preferences.customStyles),
   );
+  const hasSiteOverride = !!(currentDomain && preferences.siteStyles[currentDomain]);
+
+  useEffect(() => {
+    if (currentDomain && preferences.siteStyles[currentDomain]) {
+      setSaveScope('site');
+    }
+  }, [currentDomain, preferences.siteStyles]);
 
   useEffect(() => {
     setCustomStylesEnabled(preferences.customStylesEnabled);
-    setCustomStyles(normalizeCustomStyles(preferences.customStyles));
-  }, [preferences]);
+    setAutoDarkMode(preferences.autoDarkMode);
+    const siteStyles = currentDomain ? preferences.siteStyles[currentDomain] : undefined;
+    if (saveScope === 'site') {
+      setCustomStyles(normalizeCustomStyles(siteStyles || {}));
+    } else {
+      setCustomStyles(normalizeCustomStyles(preferences.customStyles));
+    }
+  }, [preferences, currentDomain, saveScope]);
+
+  function buildNextPreferences(nextStyles: CustomStyles, nextEnabled: boolean): GrapesPreferences {
+    const normalizedStyles = normalizeCustomStyles(nextStyles);
+    const nextPreferences: GrapesPreferences = {
+      ...preferences,
+      customStylesEnabled: nextEnabled,
+      autoDarkMode,
+      siteStyles: { ...preferences.siteStyles },
+    };
+
+    if (saveScope === 'site' && currentDomain) {
+      if (Object.keys(normalizedStyles).length === 0) {
+        delete nextPreferences.siteStyles[currentDomain];
+      } else {
+        nextPreferences.siteStyles[currentDomain] = normalizedStyles;
+      }
+    } else {
+      nextPreferences.customStyles = normalizedStyles;
+    }
+
+    return nextPreferences;
+  }
 
   async function handleApply() {
-    await onPreferencesUpdate({
-      ...preferences,
-      customStylesEnabled,
-      customStyles: normalizeCustomStyles(customStyles),
-    });
+    await onPreferencesUpdate(buildNextPreferences(customStyles, customStylesEnabled));
   }
 
   async function handleReset() {
     const resetPreferences: GrapesPreferences = {
       ...preferences,
       customStylesEnabled: false,
+      autoDarkMode: false,
       customStyles: {},
+      siteStyles: { ...preferences.siteStyles },
     };
+    if (currentDomain) {
+      delete resetPreferences.siteStyles[currentDomain];
+    }
     if (await onPreferencesUpdate(resetPreferences)) {
       setCustomStylesEnabled(resetPreferences.customStylesEnabled);
+      setAutoDarkMode(resetPreferences.autoDarkMode);
       setCustomStyles(resetPreferences.customStyles);
     }
   }
 
   async function handleThemeSelect(themeStyles: CustomStyles) {
     const nextStyles = normalizeCustomStyles(themeStyles);
-    if (
-      await onPreferencesUpdate({
-        ...preferences,
-        customStylesEnabled: true,
-        customStyles: nextStyles,
-      })
-    ) {
+    if (await onPreferencesUpdate(buildNextPreferences(nextStyles, true))) {
       setCustomStylesEnabled(true);
       setCustomStyles(nextStyles);
     }
@@ -658,19 +711,34 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
       ...customStyles,
       ...presetStyles,
     });
-    if (
-      await onPreferencesUpdate({
-        ...preferences,
-        customStylesEnabled: true,
-        customStyles: mergedStyles,
-      })
-    ) {
+    if (await onPreferencesUpdate(buildNextPreferences(mergedStyles, true))) {
       setCustomStylesEnabled(true);
       setCustomStyles(mergedStyles);
     }
   }
 
-  const activeStyles = normalizeCustomStyles(preferences.customStyles);
+  async function handleRemoveSiteOverride() {
+    if (!currentDomain) return;
+    const nextPreferences: GrapesPreferences = {
+      ...preferences,
+      autoDarkMode,
+      siteStyles: { ...preferences.siteStyles },
+    };
+    delete nextPreferences.siteStyles[currentDomain];
+    if (await onPreferencesUpdate(nextPreferences)) {
+      setCustomStyles(normalizeCustomStyles(preferences.customStyles));
+      setSaveScope('global');
+    }
+  }
+
+  async function handleInspectElement() {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      await browser.tabs.sendMessage(tab.id, { type: 'ACTIVATE_INSPECTOR' });
+    }
+  }
+
+  const activeStyles = normalizeCustomStyles(customStyles);
 
   return (
     <div className="tab-content">
@@ -683,6 +751,40 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
           />
           <span>Enable custom styles</span>
         </label>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={autoDarkMode}
+            onChange={(e) => setAutoDarkMode(e.target.checked)}
+          />
+          <span>Auto Dark Mode</span>
+        </label>
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">Save Scope</div>
+        <label className="toggle-row">
+          <input
+            type="radio"
+            name="style-save-scope"
+            checked={saveScope === 'global'}
+            onChange={() => setSaveScope('global')}
+          />
+          <span>Save globally</span>
+        </label>
+        <label className="toggle-row">
+          <input
+            type="radio"
+            name="style-save-scope"
+            checked={saveScope === 'site'}
+            onChange={() => setSaveScope('site')}
+            disabled={!currentDomain}
+          />
+          <span>Save for this site only</span>
+        </label>
+        {hasSiteOverride && (
+          <div className="setting-hint">Site override active for {currentDomain}</div>
+        )}
       </div>
 
       <div className="setting-section">
@@ -807,6 +909,17 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
         <div className="setting-hint">
           Custom CSS cannot include closing style tags or javascript: values.
         </div>
+      </div>
+
+      <div className="btn-row">
+        {hasSiteOverride && (
+          <button type="button" className="secondary-btn danger" onClick={handleRemoveSiteOverride}>
+            🗑️ Remove Site Override
+          </button>
+        )}
+        <button type="button" className="secondary-btn" onClick={handleInspectElement}>
+          🔍 Inspect Element
+        </button>
       </div>
 
       <div className="btn-row">
@@ -1040,7 +1153,11 @@ function PopupApp() {
         />
       )}
       {currentTab === 'styles' && (
-        <StylesTab preferences={preferences} onPreferencesUpdate={handlePreferencesUpdate} />
+        <StylesTab
+          preferences={preferences}
+          currentDomain={currentDomain}
+          onPreferencesUpdate={handlePreferencesUpdate}
+        />
       )}
     </div>
   );
