@@ -43,7 +43,7 @@ An agent must apply auto-fixes and resolve remaining manual lint issues.
 
 | File | Issue | Fix |
 |------|-------|-----|
-| `entrypoints/content.ts:329` | `noUnusedVariables` — unused `detail` param | Prefix with `_detail` or remove |
+| `entrypoints/content.ts:329` | `noUnusedVariables` — `statusColor` is declared but never used in the notification HTML template | Remove the variable or use it in the template (e.g. apply as inline style) |
 | `entrypoints/content.ts:680` | `noExplicitAny` — `Record<string, any>` | Define a typed `CustomStyles` interface |
 | `entrypoints/onboarding/main.tsx:9` | `noExplicitAny` — `Record<string, any>` | Use shared `CustomStyles` type |
 | `entrypoints/onboarding/main.tsx:630` | `noNonNullAssertion` — `getElementById('root')!` | Add null guard or use `as HTMLElement` |
