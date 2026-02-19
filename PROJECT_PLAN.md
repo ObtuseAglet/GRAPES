@@ -61,7 +61,7 @@ An agent must apply auto-fixes and resolve remaining manual lint issues.
 ### Task 1.2 — Create Shared TypeScript Types File
 
 There is significant type duplication across files (`GrapesPreferences`, `SurveillanceLogEntry`,
-`SurveillanceEvent` are redefined in `background.ts`, `content.ts`, and `popup/main.ts`).
+`SurveillanceEvent` are redefined in `background.ts`, `popup/main.ts`, and `onboarding/main.tsx`).
 
 **Steps:**
 1. Create `lib/types.ts` with all shared interfaces:
