@@ -771,9 +771,11 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
           placeholder="e.g. Arial, sans-serif"
           className="style-input"
         />
+        <label htmlFor="styles-font-family-preset" className="setting-label style-sub-label">
+          Font Family Preset
+        </label>
         <select
           id="styles-font-family-preset"
-          aria-label="Font family preset"
           value={customStyles.fontFamily || ''}
           onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontFamily: e.target.value }))}
           className="style-input"
@@ -785,6 +787,9 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
             </option>
           ))}
         </select>
+        <div className="setting-hint">
+          Font family allows letters, numbers, spaces, commas, quotes, parentheses, and hyphens.
+        </div>
       </div>
 
       <div className="setting-section">
@@ -800,7 +805,7 @@ function StylesTab({ preferences, onPreferencesUpdate }: StylesTabProps) {
           className="style-textarea"
         />
         <div className="setting-hint">
-          Custom CSS cannot include &lt;/style&gt; or javascript: values.
+          Custom CSS cannot include closing style tags or javascript: values.
         </div>
       </div>
 
