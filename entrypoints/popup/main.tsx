@@ -735,9 +735,26 @@ function StylesTab({ preferences, currentDomain, onPreferencesUpdate }: StylesTa
   }
 
   async function handleInspectElement() {
-    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) {
+    try {
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+
+      if (!tab || !tab.id) {
+        window.alert('Unable to find the active tab to inspect.');
+        return;
+      }
+
+      // Avoid sending messages to pages where content scripts cannot run.
+      if (tab.url && !/^https?:/i.test(tab.url)) {
+        window.alert('The inspector cannot be used on this type of page.');
+        return;
+      }
+
       await browser.tabs.sendMessage(tab.id, { type: 'ACTIVATE_INSPECTOR' });
+    } catch (error) {
+      // Handle cases where sendMessage rejects (e.g. no content script in the tab).
+      // eslint-disable-next-line no-console
+      console.error('Failed to activate inspector', error);
+      window.alert('Unable to activate the inspector on this page.');
     }
   }
 
