@@ -129,8 +129,3 @@ export function activateSelectorInspector() {
   document.addEventListener('click', handleClick, true);
   document.addEventListener('keydown', handleKeyDown, true);
 }
-
-export default defineContentScript({
-  matches: ['<all_urls>'],
-  main() {},
-});
