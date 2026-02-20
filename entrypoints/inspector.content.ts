@@ -123,7 +123,10 @@ export function activateSelectorInspector() {
   tooltipElement.style.overflow = 'hidden';
   tooltipElement.style.textOverflow = 'ellipsis';
   tooltipElement.textContent = 'Hover an element to inspect';
-  document.body.appendChild(tooltipElement);
+  const container = document.body || document.documentElement;
+  if (container) {
+    container.appendChild(tooltipElement);
+  }
 
   document.addEventListener('mousemove', handleMouseMove, true);
   document.addEventListener('click', handleClick, true);
