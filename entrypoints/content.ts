@@ -1,5 +1,7 @@
+import { activateSelectorInspector } from '../lib/inspector';
 import { injectStealthTest } from '../lib/stealth-tester';
-import type { CustomStyles } from '../lib/types';
+import { BUILT_IN_THEMES } from '../lib/themes';
+import type { CustomStyles, GrapesPreferences } from '../lib/types';
 
 // ============================================================================
 // NOTIFICATION MANAGER - Handles stacking toast notifications
@@ -500,6 +502,9 @@ export default defineContentScript({
           document.addEventListener('DOMContentLoaded', () => injectStealthTest());
         }
       }
+      if (message.type === 'ACTIVATE_INSPECTOR') {
+        activateSelectorInspector();
+      }
       return;
     });
 
@@ -648,16 +653,36 @@ export default defineContentScript({
       }
     });
 
+    const darkThemeStyles = BUILT_IN_THEMES.find((theme) => theme.id === 'dark')?.styles || {};
+    const darkModeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+    const applyPreferredStyles = (preferences: GrapesPreferences) => {
+      const currentDomainStyles = preferences.siteStyles?.[currentDomain];
+      if (preferences.customStylesEnabled) {
+        if (hasCustomStyleValues(currentDomainStyles || {})) {
+          applyCustomStyles(currentDomainStyles || {});
+          return;
+        }
+        if (hasCustomStyleValues(preferences.customStyles || {})) {
+          applyCustomStyles(preferences.customStyles || {});
+          return;
+        }
+      }
+
+      if (preferences.autoDarkMode && darkModeMediaQuery.matches) {
+        applyCustomStyles(darkThemeStyles);
+        return;
+      }
+
+      removeCustomStyles();
+    };
+
     // Wait for DOM to be ready before applying styles
     const applyWhenReady = () => {
       // Load user preferences
       browser.storage.sync.get(['preferences']).then((result) => {
-        const preferences = result.preferences || {};
-
-        // Only apply custom styles if feature is enabled (disabled by default)
-        if (preferences.customStylesEnabled && preferences.customStyles) {
-          applyCustomStyles(preferences.customStyles);
-        }
+        const preferences = (result.preferences || {}) as GrapesPreferences;
+        applyPreferredStyles(preferences);
       });
     };
 
@@ -670,14 +695,16 @@ export default defineContentScript({
     // Listen for preference changes
     browser.storage.onChanged.addListener((changes, areaName) => {
       if (areaName === 'sync' && changes.preferences) {
-        const newPreferences = changes.preferences.newValue;
-        // Update custom styles if feature is enabled
-        if (newPreferences.customStylesEnabled) {
-          applyCustomStyles(newPreferences.customStyles || {});
-        } else {
-          removeCustomStyles();
-        }
+        const newPreferences = (changes.preferences.newValue || {}) as GrapesPreferences;
+        applyPreferredStyles(newPreferences);
       }
+    });
+
+    darkModeMediaQuery.addEventListener('change', () => {
+      browser.storage.sync.get(['preferences']).then((result) => {
+        const preferences = (result.preferences || {}) as GrapesPreferences;
+        applyPreferredStyles(preferences);
+      });
     });
   },
 });
@@ -746,6 +773,10 @@ function applyCustomStyles(customStyles: CustomStyles) {
   document.head.appendChild(styleElement);
 
   console.log('[GRAPES] Custom styles applied');
+}
+
+function hasCustomStyleValues(customStyles: CustomStyles): boolean {
+  return Object.values(customStyles).some((value) => !!value);
 }
 
 /**
