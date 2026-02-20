@@ -159,9 +159,7 @@ function isGrapesPreferences(value: unknown): value is GrapesPreferences {
     !('globalMode' in value) ||
     !('siteSettings' in value) ||
     !('customStylesEnabled' in value) ||
-    !('autoDarkMode' in value) ||
     !('customStyles' in value) ||
-    !('siteStyles' in value) ||
     !('suppressedNotificationDomains' in value) ||
     !('onboardingComplete' in value) ||
     !('loggingEnabled' in value)
@@ -180,13 +178,14 @@ function isGrapesPreferences(value: unknown): value is GrapesPreferences {
     );
   const validStyles = isValidCustomStylesShape(prefs.customStyles);
   const validSiteStyles =
-    !!prefs.siteStyles &&
-    Object.values(prefs.siteStyles).every((siteStyles) => isValidCustomStylesShape(siteStyles));
+    !('siteStyles' in value) ||
+    (!!prefs.siteStyles &&
+      Object.values(prefs.siteStyles).every((siteStyles) => isValidCustomStylesShape(siteStyles)));
   return (
     validMode &&
     validSiteSettings &&
     typeof prefs.customStylesEnabled === 'boolean' &&
-    typeof prefs.autoDarkMode === 'boolean' &&
+    (!('autoDarkMode' in value) || typeof prefs.autoDarkMode === 'boolean') &&
     validStyles &&
     validSiteStyles &&
     Array.isArray(prefs.suppressedNotificationDomains) &&
@@ -510,12 +509,13 @@ function SettingsTab({
         });
         return;
       }
+      const importedPreferences = parsed as Partial<GrapesPreferences>;
       const updated = await onPreferencesUpdate({
-        ...parsed,
-        autoDarkMode: parsed.autoDarkMode || false,
-        customStyles: normalizeCustomStyles(parsed.customStyles || {}),
+        ...DEFAULT_PREFERENCES,
+        ...importedPreferences,
+        customStyles: normalizeCustomStyles(importedPreferences.customStyles || {}),
         siteStyles: Object.fromEntries(
-          Object.entries(parsed.siteStyles || {}).map(([domain, styles]) => [
+          Object.entries(importedPreferences.siteStyles || {}).map(([domain, styles]) => [
             domain,
             normalizeCustomStyles(styles),
           ]),

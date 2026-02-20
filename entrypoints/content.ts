@@ -1,7 +1,7 @@
+import { activateSelectorInspector } from '../lib/inspector';
 import { injectStealthTest } from '../lib/stealth-tester';
 import { BUILT_IN_THEMES } from '../lib/themes';
 import type { CustomStyles, GrapesPreferences } from '../lib/types';
-import { activateSelectorInspector } from './inspector.content';
 
 // ============================================================================
 // NOTIFICATION MANAGER - Handles stacking toast notifications
