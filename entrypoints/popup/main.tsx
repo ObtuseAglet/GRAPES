@@ -60,6 +60,11 @@ const DEFAULT_PREFERENCES: GrapesPreferences = {
   loggingEnabled: true,
 };
 
+type ImportableGrapesPreferences = Omit<GrapesPreferences, 'autoDarkMode' | 'siteStyles'> & {
+  autoDarkMode?: boolean;
+  siteStyles?: Record<string, CustomStyles>;
+};
+
 const FONT_PRESETS = [
   '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
   'Arial, sans-serif',
@@ -153,7 +158,7 @@ function customStylesEqual(a: CustomStyles, b: CustomStyles): boolean {
   );
 }
 
-function isGrapesPreferences(value: unknown): value is GrapesPreferences {
+function isGrapesPreferences(value: unknown): value is ImportableGrapesPreferences {
   if (!value || typeof value !== 'object') return false;
   if (
     !('globalMode' in value) ||
@@ -166,7 +171,7 @@ function isGrapesPreferences(value: unknown): value is GrapesPreferences {
   ) {
     return false;
   }
-  const prefs = value as GrapesPreferences;
+  const prefs = value as ImportableGrapesPreferences;
   const validMode =
     prefs.globalMode === 'full' ||
     prefs.globalMode === 'detection-only' ||
@@ -509,13 +514,15 @@ function SettingsTab({
         });
         return;
       }
-      const importedPreferences = parsed as Partial<GrapesPreferences>;
-      const updated = await onPreferencesUpdate({
+      const mergedPreferences: GrapesPreferences = {
         ...DEFAULT_PREFERENCES,
-        ...importedPreferences,
-        customStyles: normalizeCustomStyles(importedPreferences.customStyles || {}),
+        ...parsed,
+      };
+      const updated = await onPreferencesUpdate({
+        ...mergedPreferences,
+        customStyles: normalizeCustomStyles(parsed.customStyles || {}),
         siteStyles: Object.fromEntries(
-          Object.entries(importedPreferences.siteStyles || {}).map(([domain, styles]) => [
+          Object.entries(mergedPreferences.siteStyles || {}).map(([domain, styles]) => [
             domain,
             normalizeCustomStyles(styles),
           ]),
