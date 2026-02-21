@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["entrypoints/**", "lib/**", "wxt.config.ts"]
+    "includes": ["entrypoints/**", "lib/**", "core/**", "features/**", "wxt.config.ts"]
   },
   "formatter": {
     "enabled": true,

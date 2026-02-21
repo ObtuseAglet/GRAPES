@@ -1234,7 +1234,9 @@ export default defineContentScript({
           if (realState === 'hidden') {
             notifyVisibilityTracking();
           }
-          // Always return 'visible' to prevent tracking
+          if (!protectionEnabled) {
+            return realState;
+          }
           return 'visible';
         },
         configurable: true,
@@ -1252,7 +1254,9 @@ export default defineContentScript({
           if (realHidden) {
             notifyVisibilityTracking();
           }
-          // Always return false (not hidden)
+          if (!protectionEnabled) {
+            return realHidden;
+          }
           return false;
         },
         configurable: true,
@@ -1278,6 +1282,9 @@ export default defineContentScript({
     ): void {
       if (type === 'visibilitychange' && listener) {
         notifyVisibilityTracking();
+        if (!protectionEnabled) {
+          return originalAddEventListener.call(this, type, listener, options);
+        }
 
         // Create a wrapper that only fires when becoming visible (not hidden)
         const wrapper: EventListener = function (event: Event) {
@@ -1335,7 +1342,6 @@ export default defineContentScript({
             notifyVisibilityTracking();
           }
           storedHandler = handler;
-          // Set the actual handler but document.visibilityState will be spoofed
           if (originalOnVisibilityChange.set) {
             originalOnVisibilityChange.set.call(this, handler);
           }
@@ -1519,9 +1525,10 @@ export default defineContentScript({
 
         if (trackingCheck.isTracking) {
           notifyTrackingDetected('beacon');
-          console.log('[GRAPES] Blocked sendBeacon to:', url);
-          // Return true to indicate "success" but don't actually send
-          return true;
+          if (protectionEnabled) {
+            console.log('[GRAPES] Blocked sendBeacon to:', url);
+            return true;
+          }
         }
 
         return originalSendBeacon(url, data);
@@ -1542,9 +1549,10 @@ export default defineContentScript({
 
       if (trackingCheck.isTracking) {
         notifyTrackingDetected('fetch');
-        console.log('[GRAPES] Blocked fetch to:', url);
-        // Return a fake successful response
-        return Promise.resolve(new Response('', { status: 200, statusText: 'OK' }));
+        if (protectionEnabled) {
+          console.log('[GRAPES] Blocked fetch to:', url);
+          return Promise.resolve(new Response('', { status: 200, statusText: 'OK' }));
+        }
       }
 
       return originalFetch.call(window, input, init);
@@ -1575,21 +1583,18 @@ export default defineContentScript({
 
       if (trackingCheck?.isTracking) {
         notifyTrackingDetected('xhr');
-        console.log('[GRAPES] Blocked XHR to:', (this as any).__grapesUrl);
-
-        // Simulate successful response
-        Object.defineProperty(this, 'status', { value: 200, writable: false });
-        Object.defineProperty(this, 'statusText', { value: 'OK', writable: false });
-        Object.defineProperty(this, 'responseText', { value: '', writable: false });
-        Object.defineProperty(this, 'readyState', { value: 4, writable: false });
-
-        // Fire events
-        setTimeout(() => {
-          this.dispatchEvent(new Event('load'));
-          this.dispatchEvent(new Event('loadend'));
-        }, 0);
-
-        return;
+        if (protectionEnabled) {
+          console.log('[GRAPES] Blocked XHR to:', (this as any).__grapesUrl);
+          Object.defineProperty(this, 'status', { value: 200, writable: false });
+          Object.defineProperty(this, 'statusText', { value: 'OK', writable: false });
+          Object.defineProperty(this, 'responseText', { value: '', writable: false });
+          Object.defineProperty(this, 'readyState', { value: 4, writable: false });
+          setTimeout(() => {
+            this.dispatchEvent(new Event('load'));
+            this.dispatchEvent(new Event('loadend'));
+          }, 0);
+          return;
+        }
       }
 
       return originalXHRSend.call(this, body);
@@ -1621,13 +1626,13 @@ export default defineContentScript({
 
             if (trackingCheck.isTracking) {
               notifyTrackingDetected('pixel');
-              console.log('[GRAPES] Blocked tracking pixel:', value);
-              // Don't set the src - block the tracking pixel
-              // Fire load event to not break page logic
-              setTimeout(() => {
-                this.dispatchEvent(new Event('load'));
-              }, 0);
-              return;
+              if (protectionEnabled) {
+                console.log('[GRAPES] Blocked tracking pixel:', value);
+                setTimeout(() => {
+                  this.dispatchEvent(new Event('load'));
+                }, 0);
+                return;
+              }
             }
 
             originalSrcDescriptor?.set?.call(this, value);
@@ -1673,9 +1678,11 @@ export default defineContentScript({
 
               if (trackingCheck.isTracking || isTinyIframe) {
                 notifyTrackingDetected('iframe');
-                console.log('[GRAPES] Blocked tracking iframe:', src);
-                iframe.src = 'about:blank';
-                iframe.remove();
+                if (protectionEnabled) {
+                  console.log('[GRAPES] Blocked tracking iframe:', src);
+                  iframe.src = 'about:blank';
+                  iframe.remove();
+                }
               }
             }
           }
@@ -1709,10 +1716,12 @@ export default defineContentScript({
         // Only block if it actually looks like tracking (has URL pattern or is to tracking domain)
         if (trackingCheck.isTracking) {
           notifyTrackingDetected('pixel');
-          console.log('[GRAPES] Blocked tracking pixel image:', src);
-          img.src =
-            'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-          img.removeAttribute('src');
+          if (protectionEnabled) {
+            console.log('[GRAPES] Blocked tracking pixel image:', src);
+            img.src =
+              'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+            img.removeAttribute('src');
+          }
         }
       }
     }

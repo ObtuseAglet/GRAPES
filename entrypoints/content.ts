@@ -2,6 +2,7 @@ import { activateSelectorInspector } from '../lib/inspector';
 import { injectStealthTest } from '../lib/stealth-tester';
 import { BUILT_IN_THEMES } from '../lib/themes';
 import type { CustomStyles, GrapesPreferences } from '../lib/types';
+import { applyEditorRules } from '../features/editor/rules';
 
 // ============================================================================
 // NOTIFICATION MANAGER - Handles stacking toast notifications
@@ -679,11 +680,43 @@ export default defineContentScript({
 
     // Wait for DOM to be ready before applying styles
     const applyWhenReady = () => {
-      // Load user preferences
-      browser.storage.sync.get(['preferences']).then((result) => {
-        const preferences = (result.preferences || {}) as GrapesPreferences;
-        applyPreferredStyles(preferences);
-      });
+      browser.runtime
+        .sendMessage({
+          type: 'CORE_GET_STATE',
+          requestId: `content-${Date.now()}`,
+          source: 'content',
+          timestamp: Date.now(),
+          schemaVersion: 2,
+        })
+        .then((response) => {
+          if (response?.ok && response.data) {
+            const state = response.data;
+            const preferences = {
+              globalMode: state.coreSettings.mode,
+              siteSettings: state.sitePolicy,
+              customStylesEnabled: state.editorStyles.customStylesEnabled,
+              autoDarkMode: state.editorStyles.autoDarkMode,
+              customStyles: state.editorStyles.customStyles,
+              siteStyles: state.editorStyles.siteStyles,
+              suppressedNotificationDomains: state.editorStyles.suppressedNotificationDomains,
+              onboardingComplete: true,
+              loggingEnabled: state.coreSettings.loggingEnabled,
+            } as GrapesPreferences;
+            applyPreferredStyles(preferences);
+            applyEditorRules(state.editorRules || []);
+            return;
+          }
+          return browser.storage.sync.get(['preferences']).then((result) => {
+            const preferences = (result.preferences || {}) as GrapesPreferences;
+            applyPreferredStyles(preferences);
+          });
+        })
+        .catch(() => {
+          browser.storage.sync.get(['preferences']).then((result) => {
+            const preferences = (result.preferences || {}) as GrapesPreferences;
+            applyPreferredStyles(preferences);
+          });
+        });
     };
 
     if (document.readyState === 'loading') {
@@ -697,6 +730,9 @@ export default defineContentScript({
       if (areaName === 'sync' && changes.preferences) {
         const newPreferences = (changes.preferences.newValue || {}) as GrapesPreferences;
         applyPreferredStyles(newPreferences);
+      }
+      if (areaName === 'sync' && changes.v2_state?.newValue?.editorRules) {
+        applyEditorRules(changes.v2_state.newValue.editorRules);
       }
     });
 

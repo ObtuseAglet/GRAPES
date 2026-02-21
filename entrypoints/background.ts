@@ -1,3 +1,19 @@
+import type { CoreRequest, CoreResponse } from '../core/contracts/messages';
+import { SCHEMA_VERSION, type ProtectionMode, type ThreatCategory, type ThreatEvent } from '../core/contracts/types';
+import { isCoreRequest } from '../core/contracts/validators';
+import { normalizeLegacyDetectionType } from '../core/detection/normalize';
+import { ThreatLogStore } from '../core/logging/log-store';
+import { MockSyncProvider } from '../core/sharing/provider';
+import { SharingQueueService } from '../core/sharing/queue';
+import { toSharedReport } from '../core/sharing/sanitizer';
+import {
+  DEFAULT_STORAGE_STATE_V2,
+  fromLegacyPreferences,
+  toLegacyPreferences,
+  type StorageStateV2,
+} from '../core/storage/schema';
+import { extractBaseDomain } from '../core/services/domain';
+import { getProtectionStatusForDomain } from '../core/services/policy';
 import type {
   GrapesPreferences,
   SurveillanceData,
@@ -5,573 +21,437 @@ import type {
   SurveillanceLogEntry,
 } from '../lib/types';
 
-// Default preferences for new installs
-const DEFAULT_PREFERENCES: GrapesPreferences = {
-  globalMode: 'detection-only', // Default to detection-only mode
-  siteSettings: {},
-  customStylesEnabled: false, // Disabled by default
-  autoDarkMode: false,
-  customStyles: {},
-  siteStyles: {},
-  suppressedNotificationDomains: [],
-  onboardingComplete: false,
-  loggingEnabled: true, // Logging enabled by default for local analysis
-};
+const STATE_KEY = 'v2_state';
+const INSTALL_MARKER_KEY = 'v2_install_state';
+const LEGACY_LOGS_KEY = 'surveillanceLogs';
+
+const logStore = new ThreatLogStore();
+const sharingQueue = new SharingQueueService(new MockSyncProvider());
 
 const tabSurveillance: Map<number, SurveillanceData> = new Map();
-// Map tabId -> log entry for current page visit
 const tabLogEntries: Map<number, SurveillanceLogEntry> = new Map();
 
-/**
- * Get or create a log entry for a tab
- */
-function getOrCreateLogEntry(
-  tabId: number,
-  url: string,
-  domain: string,
-  prefs: GrapesPreferences,
-): SurveillanceLogEntry {
-  let entry = tabLogEntries.get(tabId);
-  if (!entry || entry.domain !== domain) {
-    const status = getProtectionStatusForDomain(domain, prefs);
-    entry = {
-      domain,
-      url,
-      timestamp: Date.now(),
-      events: [],
-      protectionMode: status.mode,
-      blocked: status.protectionEnabled,
+async function getState(): Promise<StorageStateV2> {
+  const result = await browser.storage.sync.get([STATE_KEY]);
+  return (result[STATE_KEY] as StorageStateV2 | undefined) || DEFAULT_STORAGE_STATE_V2;
+}
+
+async function setState(state: StorageStateV2): Promise<void> {
+  await browser.storage.sync.set({ [STATE_KEY]: state });
+}
+
+async function ensureV2State(): Promise<StorageStateV2> {
+  const installMarker = await browser.storage.local.get([INSTALL_MARKER_KEY]);
+  const marker = installMarker[INSTALL_MARKER_KEY] as
+    | { schemaVersion: number; hardResetApplied: boolean }
+    | undefined;
+
+  if (!marker?.hardResetApplied || marker.schemaVersion !== SCHEMA_VERSION) {
+    await browser.storage.sync.clear();
+    await browser.storage.local.clear();
+    const fresh: StorageStateV2 = {
+      ...DEFAULT_STORAGE_STATE_V2,
+      installState: {
+        schemaVersion: SCHEMA_VERSION,
+        hardResetApplied: true,
+        resetTimestamp: Date.now(),
+      },
     };
-    tabLogEntries.set(tabId, entry);
+    await setState(fresh);
+    await browser.storage.local.set({
+      [INSTALL_MARKER_KEY]: {
+        schemaVersion: SCHEMA_VERSION,
+        hardResetApplied: true,
+      },
+    });
+    return fresh;
   }
-  return entry;
+
+  const state = await getState();
+  if (state.coreSettings.schemaVersion !== SCHEMA_VERSION) {
+    const upgraded: StorageStateV2 = {
+      ...DEFAULT_STORAGE_STATE_V2,
+      ...state,
+      coreSettings: {
+        ...DEFAULT_STORAGE_STATE_V2.coreSettings,
+        ...state.coreSettings,
+        schemaVersion: SCHEMA_VERSION,
+      },
+      installState: {
+        schemaVersion: SCHEMA_VERSION,
+        hardResetApplied: true,
+        resetTimestamp: state.installState?.resetTimestamp || Date.now(),
+      },
+    };
+    await setState(upgraded);
+    return upgraded;
+  }
+
+  return state;
 }
 
-/**
- * Add an event to the log entry and persist if logging is enabled
- */
-async function logSurveillanceEvent(
+function updateSurveillanceSummary(tabId: number, event: ThreatEvent): SurveillanceData {
+  const existing: SurveillanceData = tabSurveillance.get(tabId) || {
+    mutationObserver: false,
+    sessionReplay: [],
+    fingerprinting: [],
+    visibilityTracking: false,
+    trackingPixels: [],
+    timestamp: Date.now(),
+  };
+
+  if (event.category === 'dom-monitoring') existing.mutationObserver = true;
+  if (event.category === 'session-replay') {
+    existing.sessionReplay = [...new Set([...existing.sessionReplay, ...event.evidence])];
+  }
+  if (event.category === 'fingerprinting') {
+    existing.fingerprinting = [...new Set([...existing.fingerprinting, ...event.evidence])];
+  }
+  if (event.category === 'visibility-tracking') existing.visibilityTracking = true;
+  if (event.category === 'tracking-pixel') {
+    existing.trackingPixels = [...new Set([...existing.trackingPixels, ...event.evidence])];
+  }
+  existing.timestamp = Date.now();
+  tabSurveillance.set(tabId, existing);
+  return existing;
+}
+
+async function appendLegacyLog(event: ThreatEvent): Promise<void> {
+  const existing = tabLogEntries.get(event.tabId);
+  const nextEvent: SurveillanceEvent = {
+    type: event.category,
+    details: event.evidence,
+    timestamp: event.ts,
+    blocked: event.blocked,
+  };
+
+  const entry: SurveillanceLogEntry =
+    existing && existing.domain === event.domain
+      ? {
+          ...existing,
+          events: mergeSurveillanceEvents(existing.events, nextEvent),
+          timestamp: Date.now(),
+          blocked: event.blocked,
+          protectionMode: event.mode,
+        }
+      : {
+          domain: event.domain,
+          url: event.url,
+          timestamp: Date.now(),
+          events: [nextEvent],
+          protectionMode: event.mode,
+          blocked: event.blocked,
+        };
+
+  tabLogEntries.set(event.tabId, entry);
+
+  const result = await browser.storage.local.get([LEGACY_LOGS_KEY]);
+  const logs = (result[LEGACY_LOGS_KEY] as SurveillanceLogEntry[] | undefined) || [];
+  const today = new Date(entry.timestamp).toDateString();
+  const idx = logs.findIndex(
+    (item) => item.domain === entry.domain && new Date(item.timestamp).toDateString() === today,
+  );
+  if (idx >= 0) {
+    logs[idx] = {
+      ...logs[idx],
+      timestamp: entry.timestamp,
+      events: mergeManyEvents(logs[idx].events, entry.events),
+      blocked: entry.blocked,
+      protectionMode: entry.protectionMode,
+    };
+  } else {
+    logs.push(entry);
+  }
+  if (logs.length > 100) logs.shift();
+  await browser.storage.local.set({ [LEGACY_LOGS_KEY]: logs });
+}
+
+function mergeSurveillanceEvents(
+  existing: SurveillanceEvent[],
+  incoming: SurveillanceEvent,
+): SurveillanceEvent[] {
+  const target = existing.find((event) => event.type === incoming.type);
+  if (!target) return [...existing, incoming];
+  target.details = [...new Set([...target.details, ...incoming.details])];
+  target.timestamp = Math.max(target.timestamp, incoming.timestamp);
+  target.blocked = incoming.blocked;
+  return [...existing];
+}
+
+function mergeManyEvents(existing: SurveillanceEvent[], incoming: SurveillanceEvent[]): SurveillanceEvent[] {
+  let next = [...existing];
+  for (const event of incoming) {
+    next = mergeSurveillanceEvents(next, event);
+  }
+  return next;
+}
+
+function buildEvent(
   tabId: number,
   url: string,
   domain: string,
-  eventType: SurveillanceEvent['type'],
-  details: string[],
-  blocked: boolean,
-) {
-  console.log('[GRAPES] logSurveillanceEvent called:', {
+  category: ThreatCategory,
+  detector: ThreatEvent['detector'],
+  evidence: string[],
+  mode: ProtectionMode,
+): ThreatEvent {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     tabId,
+    url,
     domain,
-    eventType,
-    details,
-    blocked,
-  });
+    category,
+    detector,
+    confidence: evidence.length > 1 ? 'high' : 'medium',
+    blocked: mode === 'full',
+    mode,
+    ts: Date.now(),
+    evidence,
+  };
+}
 
-  const prefs = await browser.storage.sync
-    .get(['preferences'])
-    .then((r) => (r.preferences as GrapesPreferences) || DEFAULT_PREFERENCES);
-  const entry = getOrCreateLogEntry(tabId, url, domain, prefs);
+async function processThreatEvent(event: ThreatEvent): Promise<void> {
+  updateSurveillanceSummary(event.tabId, event);
+  updateBadgeForTab(event.tabId, tabSurveillance.get(event.tabId)!);
 
-  console.log('[GRAPES] Current entry events before:', entry.events.length);
-
-  // Check if we already have this event type
-  const existing = entry.events.find((e) => e.type === eventType);
-  if (existing) {
-    // Merge details without duplicates
-    existing.details = [...new Set([...existing.details, ...details])];
-    existing.timestamp = Date.now();
-  } else {
-    entry.events.push({
-      type: eventType,
-      details,
-      timestamp: Date.now(),
-      blocked,
-    });
+  const state = await getState();
+  if (state.coreSettings.loggingEnabled) {
+    await logStore.appendPersistent(event);
+    await appendLegacyLog(event);
   }
 
-  console.log('[GRAPES] Entry events after:', entry.events.length);
-  console.log('[GRAPES] tabLogEntries has entry:', tabLogEntries.has(tabId));
+  await sharingQueue.enqueue(toSharedReport(event));
+}
 
-  // Persist to storage if logging is enabled
-  if (prefs.loggingEnabled) {
-    console.log('[GRAPES] Persisting log entry...');
-    await persistLogEntry(entry);
-    console.log('[GRAPES] Log entry persisted');
-  } else {
-    console.log('[GRAPES] Logging disabled, not persisting');
+async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
+  const state = await getState();
+  switch (request.type) {
+    case 'CORE_GET_STATE':
+      return { ok: true, data: state };
+    case 'CORE_SET_MODE': {
+      const next = { ...state, coreSettings: { ...state.coreSettings, mode: request.mode } };
+      await setState(next);
+      return { ok: true, data: { success: true } };
+    }
+    case 'CORE_SET_SITE_POLICY': {
+      const next = {
+        ...state,
+        sitePolicy: { ...state.sitePolicy, [request.domain]: request.policy },
+      };
+      await setState(next);
+      return { ok: true, data: { success: true } };
+    }
+    case 'CORE_SET_LOGGING': {
+      const next = {
+        ...state,
+        coreSettings: { ...state.coreSettings, loggingEnabled: request.enabled },
+      };
+      await setState(next);
+      return { ok: true, data: { success: true } };
+    }
+    case 'CORE_GET_TAB_THREATS':
+      return { ok: true, data: logStore.getTabThreats(request.tabId) };
+    case 'CORE_GET_LOGS':
+      return { ok: true, data: await logStore.getPersistent() };
+    case 'CORE_CLEAR_LOGS':
+      await logStore.clearPersistent();
+      await browser.storage.local.remove([LEGACY_LOGS_KEY]);
+      return { ok: true, data: { success: true } };
+    case 'CORE_SET_EDITOR_RULES': {
+      const next = { ...state, editorRules: request.rules };
+      await setState(next);
+      return { ok: true, data: { success: true } };
+    }
+    case 'CORE_SET_SHARING_CONSENT': {
+      const sharing = await sharingQueue.setConsent(request.enabled);
+      const next = { ...state, sharing: { ...state.sharing, ...sharing } };
+      await setState(next);
+      return { ok: true, data: { success: true } };
+    }
+    case 'CORE_FLUSH_SHARING_QUEUE': {
+      const sharing = await sharingQueue.flushNow();
+      const next = { ...state, sharing: { ...state.sharing, ...sharing } };
+      await setState(next);
+      return { ok: true, data: { success: true } };
+    }
+    case 'CORE_GET_SHARING_STATUS': {
+      const sharing = await sharingQueue.getState();
+      return {
+        ok: true,
+        data: {
+          consent: sharing.consent,
+          queueLength: sharing.queue.length,
+          lastSyncAt: sharing.lastSyncAt,
+        },
+      };
+    }
+    case 'CORE_REPORT_THREAT':
+      await processThreatEvent(request.event);
+      return { ok: true, data: { success: true } };
+    case 'CORE_QUEUE_REPORT':
+      await sharingQueue.enqueue(request.report);
+      return { ok: true, data: { success: true } };
   }
 }
 
-/**
- * Persist a log entry to local storage
- */
-async function persistLogEntry(entry: SurveillanceLogEntry) {
-  console.log('[GRAPES] persistLogEntry called for domain:', entry.domain);
-  const result = await browser.storage.local.get(['surveillanceLogs']);
-  const logs: SurveillanceLogEntry[] = result.surveillanceLogs || [];
-  console.log('[GRAPES] Existing logs count:', logs.length);
-
-  // Find existing entry for same domain + same day
-  const today = new Date(entry.timestamp).toDateString();
-  const existingIdx = logs.findIndex(
-    (l) => l.domain === entry.domain && new Date(l.timestamp).toDateString() === today,
-  );
-
-  if (existingIdx >= 0) {
-    // Merge events
-    const existing = logs[existingIdx];
-    for (const event of entry.events) {
-      const existingEvent = existing.events.find((e) => e.type === event.type);
-      if (existingEvent) {
-        existingEvent.details = [...new Set([...existingEvent.details, ...event.details])];
-        existingEvent.timestamp = Math.max(existingEvent.timestamp, event.timestamp);
-      } else {
-        existing.events.push(event);
-      }
-    }
-    existing.timestamp = Math.max(existing.timestamp, entry.timestamp);
-  } else {
-    // Add new entry (keep last 100 entries)
-    logs.push(entry);
-    if (logs.length > 100) {
-      logs.shift();
-    }
-  }
-
-  await browser.storage.local.set({ surveillanceLogs: logs });
-  console.log('[GRAPES] Logs saved to storage, new count:', logs.length);
+function createEnvelope() {
+  return {
+    requestId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    source: 'background' as const,
+    timestamp: Date.now(),
+    schemaVersion: SCHEMA_VERSION,
+  };
 }
 
 export default defineBackground(() => {
-  console.log('[GRAPES] Background script initialized');
+  void ensureV2State();
 
-  // Listen for extension install/update
-  browser.runtime.onInstalled.addListener((details) => {
-    if (details.reason === 'install') {
-      console.log('[GRAPES] Extension installed');
-
-      // Set default preferences for new install
-      browser.storage.sync.set({
-        preferences: DEFAULT_PREFERENCES,
-      });
-
-      // Open onboarding page
-      browser.tabs.create({
-        url: browser.runtime.getURL('onboarding.html'),
-      });
-    } else if (details.reason === 'update') {
-      // Migrate old preferences if needed
-      browser.storage.sync.get(['preferences']).then((result) => {
-        const oldPrefs = result.preferences;
-        if (oldPrefs) {
-          if (!('globalMode' in oldPrefs)) {
-            // Migrate from old format
-            const newPrefs: GrapesPreferences = {
-              ...DEFAULT_PREFERENCES,
-              customStylesEnabled: oldPrefs.enabled || false,
-              customStyles: oldPrefs.customStyles || {},
-              onboardingComplete: true, // Existing users don't need onboarding
-            };
-            browser.storage.sync.set({ preferences: newPrefs });
-            console.log('[GRAPES] Migrated preferences to new format');
-            return;
-          }
-
-          if (!('siteStyles' in oldPrefs) || !('autoDarkMode' in oldPrefs)) {
-            const newPrefs: GrapesPreferences = {
-              ...DEFAULT_PREFERENCES,
-              ...oldPrefs,
-              siteStyles: oldPrefs.siteStyles || {},
-              autoDarkMode: oldPrefs.autoDarkMode || false,
-            };
-            browser.storage.sync.set({ preferences: newPrefs });
-            console.log('[GRAPES] Added missing style preference fields');
-          }
-        }
-      });
-    }
+  browser.runtime.onInstalled.addListener(() => {
+    void ensureV2State();
   });
 
-  // Listen for messages from content scripts
   browser.runtime.onMessage.addListener((message, sender) => {
-    if (message.type === 'SUSPICIOUS_OBSERVATION_DETECTED') {
-      console.log('[GRAPES] Suspicious observation reported:', message.data);
-
-      if (sender.tab?.id && sender.tab.url) {
-        const domain = extractBaseDomain(new URL(sender.tab.url).hostname);
-        const existing = tabSurveillance.get(sender.tab.id) || {
-          mutationObserver: false,
-          sessionReplay: [],
-          fingerprinting: [],
-          visibilityTracking: false,
-          trackingPixels: [],
-          timestamp: Date.now(),
-        };
-        existing.mutationObserver = true;
-        existing.timestamp = Date.now();
-        tabSurveillance.set(sender.tab.id, existing);
-        console.log('[GRAPES] Updated tabSurveillance for tab', sender.tab.id, ':', existing);
-
-        updateBadgeForTab(sender.tab.id, existing);
-
-        // Log the event
-        browser.storage.sync
-          .get(['preferences'])
-          .then((r) => {
-            const prefs = (r.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-            const status = getProtectionStatusForDomain(domain, prefs);
-            logSurveillanceEvent(
-              sender.tab!.id!,
-              sender.tab!.url!,
-              domain,
-              'dom-monitoring',
-              [message.data?.targetType || 'unknown'],
-              status.protectionEnabled,
-            );
-          })
-          .catch((e) => console.error('[GRAPES] Error logging dom-monitoring event:', e));
-      }
-      return; // Explicit return for fire-and-forget messages
+    if (isCoreRequest(message)) {
+      return handleCoreRequest(message);
     }
 
-    if (message.type === 'SESSION_REPLAY_DETECTED') {
-      console.log('[GRAPES] Session replay tools detected:', message.data);
+    if (
+      (message.type === 'SUSPICIOUS_OBSERVATION_DETECTED' ||
+        message.type === 'SESSION_REPLAY_DETECTED' ||
+        message.type === 'FINGERPRINTING_DETECTED' ||
+        message.type === 'VISIBILITY_TRACKING_DETECTED' ||
+        message.type === 'TRACKING_PIXEL_DETECTED') &&
+      sender.tab?.id &&
+      sender.tab.url
+    ) {
+      return getState().then((state) => {
+        const domain = extractBaseDomain(new URL(sender.tab!.url!).hostname);
+        const status = getProtectionStatusForDomain(domain, state);
+        const normalized = normalizeLegacyDetectionType(message.type);
+        if (!normalized) {
+          return { ok: false, error: 'unknown-detection-type' };
+        }
 
-      if (sender.tab?.id && sender.tab.url) {
-        const domain = extractBaseDomain(new URL(sender.tab.url).hostname);
-        const existing = tabSurveillance.get(sender.tab.id) || {
-          mutationObserver: false,
-          sessionReplay: [],
-          fingerprinting: [],
-          visibilityTracking: false,
-          trackingPixels: [],
-          timestamp: Date.now(),
-        };
-        existing.sessionReplay = message.data.tools || [];
-        existing.timestamp = Date.now();
-        tabSurveillance.set(sender.tab.id, existing);
-        console.log('[GRAPES] Updated tabSurveillance for tab', sender.tab.id);
-
-        updateBadgeForTab(sender.tab.id, existing);
-
-        // Log the event
-        browser.storage.sync
-          .get(['preferences'])
-          .then((r) => {
-            const prefs = (r.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-            const status = getProtectionStatusForDomain(domain, prefs);
-            logSurveillanceEvent(
-              sender.tab!.id!,
-              sender.tab!.url!,
-              domain,
-              'session-replay',
-              message.data.tools || [],
-              status.protectionEnabled,
-            );
-          })
-          .catch((e) => console.error('[GRAPES] Error logging session-replay event:', e));
-      }
-      return;
-    }
-
-    if (message.type === 'FINGERPRINTING_DETECTED') {
-      console.log('[GRAPES] Fingerprinting detected:', message.data);
-
-      if (sender.tab?.id && sender.tab.url) {
-        const domain = extractBaseDomain(new URL(sender.tab.url).hostname);
-        const existing = tabSurveillance.get(sender.tab.id) || {
-          mutationObserver: false,
-          sessionReplay: [],
-          fingerprinting: [],
-          visibilityTracking: false,
-          trackingPixels: [],
-          timestamp: Date.now(),
-        };
-        const newTypes = message.data.types || [];
-        existing.fingerprinting = [...new Set([...existing.fingerprinting, ...newTypes])];
-        existing.timestamp = Date.now();
-        tabSurveillance.set(sender.tab.id, existing);
-        console.log('[GRAPES] Updated tabSurveillance for tab', sender.tab.id);
-
-        updateBadgeForTab(sender.tab.id, existing);
-
-        // Log the event
-        browser.storage.sync
-          .get(['preferences'])
-          .then((r) => {
-            const prefs = (r.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-            const status = getProtectionStatusForDomain(domain, prefs);
-            logSurveillanceEvent(
-              sender.tab!.id!,
-              sender.tab!.url!,
-              domain,
-              'fingerprinting',
-              newTypes,
-              status.protectionEnabled,
-            );
-          })
-          .catch((e) => console.error('[GRAPES] Error logging fingerprinting event:', e));
-      }
-      return;
-    }
-
-    if (message.type === 'VISIBILITY_TRACKING_DETECTED') {
-      console.log('[GRAPES] Visibility tracking detected:', message.data);
-
-      if (sender.tab?.id && sender.tab.url) {
-        const domain = extractBaseDomain(new URL(sender.tab.url).hostname);
-        const existing = tabSurveillance.get(sender.tab.id) || {
-          mutationObserver: false,
-          sessionReplay: [],
-          fingerprinting: [],
-          visibilityTracking: false,
-          trackingPixels: [],
-          timestamp: Date.now(),
-        };
-        existing.visibilityTracking = true;
-        existing.timestamp = Date.now();
-        tabSurveillance.set(sender.tab.id, existing);
-        console.log('[GRAPES] Updated tabSurveillance for tab', sender.tab.id);
-
-        updateBadgeForTab(sender.tab.id, existing);
-
-        // Log the event
-        browser.storage.sync
-          .get(['preferences'])
-          .then((r) => {
-            const prefs = (r.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-            const status = getProtectionStatusForDomain(domain, prefs);
-            logSurveillanceEvent(
-              sender.tab!.id!,
-              sender.tab!.url!,
-              domain,
-              'visibility-tracking',
-              ['tab-switch'],
-              status.protectionEnabled,
-            );
-          })
-          .catch((e) => console.error('[GRAPES] Error logging visibility-tracking event:', e));
-      }
-      return;
-    }
-
-    if (message.type === 'TRACKING_PIXEL_DETECTED') {
-      console.log('[GRAPES] Tracking pixels detected:', message.data);
-
-      if (sender.tab?.id && sender.tab.url) {
-        const domain = extractBaseDomain(new URL(sender.tab.url).hostname);
-        const existing = tabSurveillance.get(sender.tab.id) || {
-          mutationObserver: false,
-          sessionReplay: [],
-          fingerprinting: [],
-          visibilityTracking: false,
-          trackingPixels: [],
-          timestamp: Date.now(),
-        };
-        const newTypes = message.data.types || [];
-        existing.trackingPixels = [...new Set([...existing.trackingPixels, ...newTypes])];
-        existing.timestamp = Date.now();
-        tabSurveillance.set(sender.tab.id, existing);
-        console.log('[GRAPES] Updated tabSurveillance for tab', sender.tab.id);
-
-        updateBadgeForTab(sender.tab.id, existing);
-
-        // Log the event
-        browser.storage.sync
-          .get(['preferences'])
-          .then((r) => {
-            const prefs = (r.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-            const status = getProtectionStatusForDomain(domain, prefs);
-            logSurveillanceEvent(
-              sender.tab!.id!,
-              sender.tab!.url!,
-              domain,
-              'tracking-pixel',
-              newTypes,
-              status.protectionEnabled,
-            );
-          })
-          .catch((e) => console.error('[GRAPES] Error logging tracking-pixel event:', e));
-      }
-      return;
+        const evidence =
+          message.data?.tools ||
+          message.data?.types ||
+          [message.data?.targetType || 'detected'];
+        const event = buildEvent(
+          sender.tab!.id!,
+          sender.tab!.url!,
+          domain,
+          normalized.category,
+          normalized.detector,
+          evidence,
+          status.mode,
+        );
+        return handleCoreRequest({
+          ...createEnvelope(),
+          type: 'CORE_REPORT_THREAT',
+          event,
+        });
+      });
     }
 
     if (message.type === 'GET_SURVEILLANCE_DATA') {
-      // Return surveillance data for the requesting tab
       if (sender.tab?.id) {
         return Promise.resolve(tabSurveillance.get(sender.tab.id) || null);
       }
       return Promise.resolve(null);
     }
-
     if (message.type === 'GET_TAB_SURVEILLANCE') {
-      // Get surveillance data for a specific tab (from popup)
-      const tabId = message.tabId;
-      console.log('[GRAPES] GET_TAB_SURVEILLANCE request for tabId:', tabId);
-      console.log('[GRAPES] tabSurveillance keys:', [...tabSurveillance.keys()]);
-      const data = tabId ? tabSurveillance.get(tabId) || null : null;
-      console.log('[GRAPES] Returning surveillance data:', data);
-      return Promise.resolve(data);
+      return Promise.resolve(message.tabId ? tabSurveillance.get(message.tabId) || null : null);
     }
-
     if (message.type === 'GET_CURRENT_LOG_ENTRY') {
-      // Get the current log entry for a specific tab
-      const tabId = message.tabId;
-      console.log('[GRAPES] GET_CURRENT_LOG_ENTRY request for tabId:', tabId);
-      console.log('[GRAPES] tabLogEntries keys:', [...tabLogEntries.keys()]);
-      const entry = tabId ? tabLogEntries.get(tabId) || null : null;
-      console.log('[GRAPES] Returning log entry:', entry);
-      return Promise.resolve(entry);
+      return Promise.resolve(message.tabId ? tabLogEntries.get(message.tabId) || null : null);
     }
-
     if (message.type === 'GET_ALL_LOGS') {
-      // Get all stored logs (for future MongoDB sync or export)
-      console.log('[GRAPES] GET_ALL_LOGS request');
-      return browser.storage.local.get(['surveillanceLogs']).then((r) => {
-        const logs = r.surveillanceLogs || [];
-        console.log('[GRAPES] Returning', logs.length, 'logs');
-        return logs;
-      });
+      return browser.storage.local.get([LEGACY_LOGS_KEY]).then((result) => result[LEGACY_LOGS_KEY] || []);
     }
-
     if (message.type === 'CLEAR_LOGS') {
-      // Clear all stored logs
-      return browser.storage.local.remove(['surveillanceLogs']).then(() => ({ success: true }));
+      return handleCoreRequest({
+        ...createEnvelope(),
+        type: 'CORE_CLEAR_LOGS',
+      }).then(() => ({ success: true }));
     }
-
     if (message.type === 'GET_PROTECTION_STATUS') {
-      // Get protection status for a specific domain
-      return browser.storage.sync.get(['preferences']).then((result) => {
-        const prefs = (result.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-        const domain = message.domain;
-        return getProtectionStatusForDomain(domain, prefs);
-      });
+      return getState().then((state) => getProtectionStatusForDomain(message.domain, state));
     }
-
     if (message.type === 'SET_SITE_PROTECTION') {
-      // Set protection for a specific domain
-      const { domain, setting } = message;
-      return browser.storage.sync.get(['preferences']).then((result) => {
-        const prefs = (result.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-        prefs.siteSettings[domain] = setting;
-        return browser.storage.sync.set({ preferences: prefs }).then(() => {
-          console.log(`[GRAPES] Site protection for ${domain} set to ${setting}`);
-          return { success: true };
-        });
-      });
+      return handleCoreRequest({
+        ...createEnvelope(),
+        type: 'CORE_SET_SITE_POLICY',
+        domain: message.domain,
+        policy: message.setting,
+      }).then(() => ({ success: true }));
     }
-
     if (message.type === 'SET_GLOBAL_MODE') {
-      // Set global protection mode
-      const { mode } = message;
-      return browser.storage.sync.get(['preferences']).then((result) => {
-        const prefs = (result.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-        prefs.globalMode = mode;
-        return browser.storage.sync.set({ preferences: prefs }).then(() => {
-          console.log(`[GRAPES] Global mode set to ${mode}`);
-          return { success: true };
-        });
-      });
+      return handleCoreRequest({
+        ...createEnvelope(),
+        type: 'CORE_SET_MODE',
+        mode: message.mode,
+      }).then(() => ({ success: true }));
     }
-
     if (message.type === 'GET_PREFERENCES') {
-      // Get all preferences
-      return browser.storage.sync.get(['preferences']).then((result) => {
-        return (result.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-      });
+      return getState().then((state) => toLegacyPreferences(state));
     }
-
     if (message.type === 'SET_PREFERENCES') {
-      // Set all preferences
-      return browser.storage.sync.set({ preferences: message.preferences }).then(() => {
-        return { success: true };
+      return getState().then((state) => {
+        const next = fromLegacyPreferences(message.preferences as GrapesPreferences, state);
+        return setState(next).then(() => ({ success: true }));
       });
     }
-
     if (message.type === 'COMPLETE_ONBOARDING') {
-      // Mark onboarding as complete
-      return browser.storage.sync.get(['preferences']).then((result) => {
-        const prefs = (result.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-        prefs.onboardingComplete = true;
-        return browser.storage.sync.set({ preferences: prefs }).then(() => {
-          return { success: true };
-        });
+      return Promise.resolve({ success: true });
+    }
+    if (message.type === 'ADD_SUPPRESSED_DOMAIN' || message.type === 'REMOVE_SUPPRESSED_DOMAIN') {
+      return getState().then((state) => {
+        const current = new Set(state.editorStyles.suppressedNotificationDomains);
+        if (message.type === 'ADD_SUPPRESSED_DOMAIN') current.add(message.domain);
+        if (message.type === 'REMOVE_SUPPRESSED_DOMAIN') current.delete(message.domain);
+        const next = {
+          ...state,
+          editorStyles: {
+            ...state.editorStyles,
+            suppressedNotificationDomains: Array.from(current),
+          },
+        };
+        return setState(next).then(() => ({ success: true }));
       });
     }
-
-    if (message.type === 'ADD_SUPPRESSED_DOMAIN') {
-      // Add a domain to the notification suppression list
-      const { domain } = message;
-      return browser.storage.sync.get(['preferences']).then((result) => {
-        const prefs = (result.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-        if (!prefs.suppressedNotificationDomains.includes(domain)) {
-          prefs.suppressedNotificationDomains.push(domain);
-        }
-        return browser.storage.sync.set({ preferences: prefs }).then(() => {
-          console.log(`[GRAPES] Added ${domain} to notification suppression list`);
-          return { success: true };
-        });
-      });
-    }
-
-    if (message.type === 'REMOVE_SUPPRESSED_DOMAIN') {
-      // Remove a domain from the notification suppression list
-      const { domain } = message;
-      return browser.storage.sync.get(['preferences']).then((result) => {
-        const prefs = (result.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-        prefs.suppressedNotificationDomains = prefs.suppressedNotificationDomains.filter(
-          (d) => d !== domain,
-        );
-        return browser.storage.sync.set({ preferences: prefs }).then(() => {
-          console.log(`[GRAPES] Removed ${domain} from notification suppression list`);
-          return { success: true };
-        });
-      });
-    }
-
     if (message.type === 'SET_LOGGING_ENABLED') {
-      // Toggle surveillance logging
-      const { enabled } = message;
-      return browser.storage.sync.get(['preferences']).then((result) => {
-        const prefs = (result.preferences as GrapesPreferences) || DEFAULT_PREFERENCES;
-        prefs.loggingEnabled = enabled;
-        return browser.storage.sync.set({ preferences: prefs }).then(() => {
-          console.log(`[GRAPES] Logging ${enabled ? 'enabled' : 'disabled'}`);
-          return { success: true };
-        });
-      });
+      return handleCoreRequest({
+        ...createEnvelope(),
+        type: 'CORE_SET_LOGGING',
+        enabled: !!message.enabled,
+      }).then(() => ({ success: true }));
     }
-
-    // Return undefined for synchronous handling (no response needed)
     return;
   });
 
-  // Clear badge when tab is updated (navigates to new page)
   browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status === 'loading') {
-      // Clear the badge and surveillance data when page starts loading
       clearBadgeForTab(tabId);
       tabSurveillance.delete(tabId);
+      tabLogEntries.delete(tabId);
+      logStore.clearTab(tabId);
     }
   });
 
-  // Clean up when tab is closed
   browser.tabs.onRemoved.addListener((tabId) => {
     tabSurveillance.delete(tabId);
+    tabLogEntries.delete(tabId);
+    logStore.clearTab(tabId);
   });
 });
 
-/**
- * Update the extension badge based on surveillance data
- */
 function updateBadgeForTab(tabId: number, data: SurveillanceData) {
-  // Determine badge based on what's detected
   const hasFingerprinting = data.fingerprinting.length > 0;
   const hasReplay = data.sessionReplay.length > 0;
   const hasObservation = data.mutationObserver;
   const hasVisibility = data.visibilityTracking;
   const hasTracking = data.trackingPixels.length > 0;
 
-  // Count total threat types
   const threatCount =
     (hasFingerprinting ? 1 : 0) +
     (hasReplay ? 1 : 0) +
@@ -584,108 +464,17 @@ function updateBadgeForTab(tabId: number, data: SurveillanceData) {
     return;
   }
 
-  // Set badge text to show threat count
-  browser.action.setBadgeText({
-    text: threatCount.toString(),
-    tabId: tabId,
-  });
-
-  // Color based on severity (fingerprinting = most severe)
-  let color = '#e94560'; // Red for observation
-  if (hasVisibility) color = '#3498db'; // Blue for visibility
-  if (hasTracking) color = '#e67e22'; // Orange for tracking pixels
-  if (hasReplay) color = '#f39c12'; // Yellow-orange for replay
-  if (hasFingerprinting) color = '#9b59b6'; // Purple for fingerprinting
-
-  browser.action.setBadgeBackgroundColor({
-    color: color,
-    tabId: tabId,
-  });
-
-  browser.action.setBadgeTextColor({
-    color: '#ffffff',
-    tabId: tabId,
-  });
-
-  // Build title
-  const threats: string[] = [];
-  if (hasObservation) threats.push('DOM monitoring');
-  if (hasVisibility) threats.push('Visibility tracking');
-  if (hasTracking) threats.push(`Tracking pixels (${data.trackingPixels.join(', ')})`);
-  if (hasReplay) threats.push(`Session replay (${data.sessionReplay.join(', ')})`);
-  if (hasFingerprinting) threats.push(`Fingerprinting (${data.fingerprinting.join(', ')})`);
-
-  browser.action.setTitle({
-    title: `GRAPES: ${threats.join(', ')}`,
-    tabId: tabId,
-  });
-
-  console.log(`[GRAPES] Badge updated for tab ${tabId}:`, threats);
+  browser.action.setBadgeText({ text: String(threatCount), tabId });
+  let color = '#e94560';
+  if (hasVisibility) color = '#3498db';
+  if (hasTracking) color = '#e67e22';
+  if (hasReplay) color = '#f39c12';
+  if (hasFingerprinting) color = '#9b59b6';
+  browser.action.setBadgeBackgroundColor({ color, tabId });
+  browser.action.setBadgeTextColor({ color: '#ffffff', tabId });
 }
 
-/**
- * Clear the badge for a specific tab
- */
 function clearBadgeForTab(tabId: number) {
-  browser.action.setBadgeText({
-    text: '',
-    tabId: tabId,
-  });
-
-  browser.action.setTitle({
-    title: 'GRAPES Settings',
-    tabId: tabId,
-  });
-}
-
-/**
- * Get protection status for a domain
- * Returns: { protectionEnabled: boolean, mode: string, siteOverride: string | null }
- */
-function getProtectionStatusForDomain(
-  domain: string,
-  prefs: GrapesPreferences,
-): {
-  protectionEnabled: boolean;
-  mode: 'full' | 'detection-only' | 'disabled';
-  siteOverride: 'enabled' | 'disabled' | 'default' | null;
-} {
-  // Extract base domain
-  const baseDomain = extractBaseDomain(domain);
-
-  // Check for site-specific override
-  const siteOverride = prefs.siteSettings[baseDomain] || null;
-
-  if (siteOverride === 'enabled') {
-    return { protectionEnabled: true, mode: 'full', siteOverride };
-  }
-  if (siteOverride === 'disabled') {
-    return { protectionEnabled: false, mode: 'disabled', siteOverride };
-  }
-
-  // Use global mode
-  const mode = prefs.globalMode;
-  const protectionEnabled = mode === 'full';
-
-  return { protectionEnabled, mode, siteOverride };
-}
-
-/**
- * Extract base domain from hostname
- */
-function extractBaseDomain(hostname: string): string {
-  if (hostname === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
-    return hostname;
-  }
-
-  const parts = hostname.split('.');
-  if (parts.length <= 2) return hostname;
-
-  const secondLevelTLDs = ['co.uk', 'com.br', 'com.au', 'co.jp', 'co.in', 'com.mx'];
-  const lastTwo = parts.slice(-2).join('.');
-  if (secondLevelTLDs.includes(lastTwo) && parts.length > 2) {
-    return parts.slice(-3).join('.');
-  }
-
-  return parts.slice(-2).join('.');
+  browser.action.setBadgeText({ text: '', tabId });
+  browser.action.setTitle({ title: 'GRAPES Settings', tabId });
 }

@@ -14,5 +14,5 @@
     "noEmit": true,
     "types": ["wxt/client"]
   },
-  "include": ["entrypoints/**/*", "lib/**/*", "wxt.config.ts"]
+  "include": ["entrypoints/**/*", "lib/**/*", "core/**/*", "features/**/*", "wxt.config.ts"]
 }

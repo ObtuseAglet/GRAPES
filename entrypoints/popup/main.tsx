@@ -4,6 +4,7 @@ import { browser } from 'wxt/browser';
 import { ButtonGroup } from '../../lib/components/ButtonGroup';
 import { EmptyState } from '../../lib/components/EmptyState';
 import { StatusBadge } from '../../lib/components/StatusBadge';
+import type { EditorRule } from '../../features/editor/rules';
 import { ACCESSIBILITY_PRESETS, BUILT_IN_THEMES } from '../../lib/themes';
 import type {
   CustomStyles,
@@ -267,10 +268,10 @@ interface TabNavProps {
 
 function TabNav({ currentTab, onTabChange }: TabNavProps) {
   const tabs = [
-    { id: 'activity', label: '🔬 Activity' },
-    { id: 'settings', label: '⚙️ Settings' },
-    { id: 'muted', label: '🔕 Muted' },
-    { id: 'styles', label: '🎨 Styles' },
+    { id: 'now', label: '🔬 Now' },
+    { id: 'protect', label: '🛡 Protect' },
+    { id: 'edit', label: '🎨 Edit' },
+    { id: 'data', label: '📊 Data' },
   ];
 
   return (
@@ -633,12 +634,20 @@ interface StylesTabProps {
   preferences: GrapesPreferences;
   currentDomain: string;
   onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<boolean>;
+  onHighlightRuleUpdate: (text: string, color: string) => Promise<void>;
 }
 
-function StylesTab({ preferences, currentDomain, onPreferencesUpdate }: StylesTabProps) {
+function StylesTab({
+  preferences,
+  currentDomain,
+  onPreferencesUpdate,
+  onHighlightRuleUpdate,
+}: StylesTabProps) {
   const [customStylesEnabled, setCustomStylesEnabled] = useState(preferences.customStylesEnabled);
   const [autoDarkMode, setAutoDarkMode] = useState(preferences.autoDarkMode);
   const [saveScope, setSaveScope] = useState<'global' | 'site'>('global');
+  const [highlightText, setHighlightText] = useState('');
+  const [highlightColor, setHighlightColor] = useState('#fff2a8');
   const [customStyles, setCustomStyles] = useState<CustomStyles>(
     normalizeCustomStyles(preferences.customStyles),
   );
@@ -688,6 +697,7 @@ function StylesTab({ preferences, currentDomain, onPreferencesUpdate }: StylesTa
 
   async function handleApply() {
     await onPreferencesUpdate(buildNextPreferences(customStyles, customStylesEnabled));
+    await onHighlightRuleUpdate(highlightText, highlightColor);
   }
 
   async function handleReset() {
@@ -828,6 +838,29 @@ function StylesTab({ preferences, currentDomain, onPreferencesUpdate }: StylesTa
               <span className="theme-name">{theme.name}</span>
             </button>
           ))}
+        </div>
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">Text Highlight Utility</div>
+        <input
+          type="text"
+          value={highlightText}
+          onChange={(e) => setHighlightText(e.target.value)}
+          placeholder="Highlight text containing..."
+          className="style-input"
+        />
+        <label className="setting-label style-sub-label" htmlFor="highlight-color">
+          Highlight Color
+        </label>
+        <input
+          id="highlight-color"
+          type="color"
+          value={highlightColor}
+          onChange={(e) => setHighlightColor(e.target.value)}
+        />
+        <div className="setting-hint">
+          Applies a local rule to highlight matching text on this page.
         </div>
       </div>
 
@@ -999,13 +1032,60 @@ function MutedTab({ domains, onRemove }: MutedTabProps) {
   );
 }
 
+interface DataTabProps {
+  domains: string[];
+  onRemove: (domain: string) => void;
+  sharingConsent: boolean;
+  queueLength: number;
+  lastSyncAt: number | null;
+  onConsentChange: (enabled: boolean) => Promise<void>;
+  onFlushQueue: () => Promise<void>;
+}
+
+function DataTab({
+  domains,
+  onRemove,
+  sharingConsent,
+  queueLength,
+  lastSyncAt,
+  onConsentChange,
+  onFlushQueue,
+}: DataTabProps) {
+  return (
+    <div className="tab-content">
+      <div className="setting-section">
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={sharingConsent}
+            onChange={(e) => onConsentChange(e.target.checked)}
+          />
+          <span>Share anonymous surveillance reports</span>
+        </label>
+        <div className="setting-hint">Queue: {queueLength} pending report(s)</div>
+        <div className="setting-hint">
+          Last sync: {lastSyncAt ? new Date(lastSyncAt).toLocaleString() : 'Never'}
+        </div>
+        <button type="button" className="secondary-btn" onClick={onFlushQueue}>
+          Sync Queue
+        </button>
+      </div>
+      <MutedTab domains={domains} onRemove={onRemove} />
+    </div>
+  );
+}
+
 // --- Root PopupApp Component ---
 function PopupApp() {
   const [preferences, setPreferences] = useState<GrapesPreferences | null>(null);
   const [logEntry, setLogEntry] = useState<SurveillanceLogEntry | null>(null);
   const [surveillance, setSurveillance] = useState<SurveillanceData | null>(null);
-  const [currentTab, setCurrentTab] = useState('activity');
+  const [currentTab, setCurrentTab] = useState('now');
   const [currentDomain, setCurrentDomain] = useState('');
+  const [sharingConsent, setSharingConsent] = useState(false);
+  const [queueLength, setQueueLength] = useState(0);
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  const [showResetNotice, setShowResetNotice] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -1017,6 +1097,34 @@ function PopupApp() {
         const prefs: GrapesPreferences = prefsResult || DEFAULT_PREFERENCES;
         setPreferences(prefs);
         console.log('[GRAPES Popup] Preferences loaded:', prefs);
+        try {
+          const coreState = await browser.runtime.sendMessage({
+            type: 'CORE_GET_STATE',
+            requestId: `popup-state-${Date.now()}`,
+            source: 'popup',
+            timestamp: Date.now(),
+            schemaVersion: 2,
+          });
+          if (coreState?.ok) {
+            const ageMs = Date.now() - (coreState.data.installState?.resetTimestamp || 0);
+            setShowResetNotice(ageMs < 1000 * 60 * 60 * 24);
+          }
+
+          const sharingStatus = await browser.runtime.sendMessage({
+            type: 'CORE_GET_SHARING_STATUS',
+            requestId: `popup-sharing-${Date.now()}`,
+            source: 'popup',
+            timestamp: Date.now(),
+            schemaVersion: 2,
+          });
+          if (sharingStatus?.ok) {
+            setSharingConsent(sharingStatus.data.consent);
+            setQueueLength(sharingStatus.data.queueLength);
+            setLastSyncAt(sharingStatus.data.lastSyncAt);
+          }
+        } catch {
+          // Ignore if core router is unavailable during compatibility window.
+        }
 
         let tabId: number | undefined;
         let url = '';
@@ -1140,6 +1248,70 @@ function PopupApp() {
     }
   }
 
+  async function handleSharingConsent(enabled: boolean): Promise<void> {
+    const response = await browser.runtime.sendMessage({
+      type: 'CORE_SET_SHARING_CONSENT',
+      enabled,
+      requestId: `popup-consent-${Date.now()}`,
+      source: 'popup',
+      timestamp: Date.now(),
+      schemaVersion: 2,
+    });
+    if (response?.ok) {
+      setSharingConsent(enabled);
+    }
+  }
+
+  async function handleFlushQueue(): Promise<void> {
+    const response = await browser.runtime.sendMessage({
+      type: 'CORE_FLUSH_SHARING_QUEUE',
+      requestId: `popup-flush-${Date.now()}`,
+      source: 'popup',
+      timestamp: Date.now(),
+      schemaVersion: 2,
+    });
+    if (response?.ok) {
+      const status = await browser.runtime.sendMessage({
+        type: 'CORE_GET_SHARING_STATUS',
+        requestId: `popup-sharing-refresh-${Date.now()}`,
+        source: 'popup',
+        timestamp: Date.now(),
+        schemaVersion: 2,
+      });
+      if (status?.ok) {
+        setSharingConsent(status.data.consent);
+        setQueueLength(status.data.queueLength);
+        setLastSyncAt(status.data.lastSyncAt);
+      }
+    }
+  }
+
+  async function handleHighlightRuleUpdate(text: string, color: string): Promise<void> {
+    const rule: EditorRule[] =
+      text.trim().length > 0
+        ? [
+            {
+              id: `highlight-${currentDomain || 'global'}`,
+              enabled: true,
+              type: 'text-highlight',
+              label: 'Highlight text',
+              payload: {
+                text: text.trim(),
+                color,
+              },
+            },
+          ]
+        : [];
+    await browser.runtime.sendMessage({
+      type: 'CORE_SET_EDITOR_RULES',
+      rules: rule,
+      requestId: `popup-rules-${Date.now()}`,
+      source: 'popup',
+      timestamp: Date.now(),
+      schemaVersion: 2,
+    });
+  }
+
   if (!preferences) {
     return <div className="popup-container loading">Loading...</div>;
   }
@@ -1154,16 +1326,21 @@ function PopupApp() {
 
   return (
     <div className="popup-container">
+      {showResetNotice && (
+        <div className="setting-feedback success">
+          GRAPES storage was reset for schema v2. Configure protection and sharing preferences.
+        </div>
+      )}
       <Header preferences={preferences} currentDomain={currentDomain} />
       <TabNav currentTab={currentTab} onTabChange={setCurrentTab} />
-      {currentTab === 'activity' && (
+      {currentTab === 'now' && (
         <ActivityTab
           logEntry={logEntry}
           surveillance={surveillance}
           protectionActive={protectionActive}
         />
       )}
-      {currentTab === 'settings' && (
+      {currentTab === 'protect' && (
         <SettingsTab
           preferences={preferences}
           currentDomain={currentDomain}
@@ -1173,17 +1350,23 @@ function PopupApp() {
           onPreferencesUpdate={handlePreferencesUpdate}
         />
       )}
-      {currentTab === 'muted' && (
-        <MutedTab
+      {currentTab === 'data' && (
+        <DataTab
           domains={preferences.suppressedNotificationDomains}
           onRemove={handleRemoveMuted}
+          sharingConsent={sharingConsent}
+          queueLength={queueLength}
+          lastSyncAt={lastSyncAt}
+          onConsentChange={handleSharingConsent}
+          onFlushQueue={handleFlushQueue}
         />
       )}
-      {currentTab === 'styles' && (
+      {currentTab === 'edit' && (
         <StylesTab
           preferences={preferences}
           currentDomain={currentDomain}
           onPreferencesUpdate={handlePreferencesUpdate}
+          onHighlightRuleUpdate={handleHighlightRuleUpdate}
         />
       )}
     </div>
