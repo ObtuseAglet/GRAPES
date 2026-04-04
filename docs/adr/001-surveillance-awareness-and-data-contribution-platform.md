@@ -132,23 +132,118 @@ GRAPES detects threats (existing)
 
 ### Phasing
 
-1. **Phase A — Inform enhancements**: Expand popup UI with detailed threat dashboard, add explainer content, build site report card. Pure frontend work within the existing extension.
-2. **Phase B — Junk data / spoofing**: Implement response spoofing for fingerprinting and session replay. Requires careful testing per threat category. Extend `ProtectionMode` to include `spoof` option.
-3. **Phase C — Contribution pipeline**: Wire up `SharingQueueService` to a real backend. Implement opt-in consent flow. Deploy backend aggregation service.
-4. **Phase D — Public dashboard**: Build web frontend for visualizing aggregated data. Expose API for public consumption. Launch leaderboard.
+1. **Phase A — Inform enhancements** `COMPLETE`: Threat explainer content module (`lib/explainers.ts`), ThreatExplainer accordion component, SiteReportCard with letter-grade scoring, integrated into popup ActivityTab.
+2. **Phase B — Junk data / spoofing** `COMPLETE`: `ProtectionMode = 'spoof'` added, junk data generators (`core/spoof/generators.ts`), API override injector (`core/spoof/injector.ts`), inline MAIN world spoof overrides in `stealth.content.ts`, purple "Spoofing" status in popup.
+3. **Phase C — Contribution pipeline** `COMPLETE`: `ContributionSettings` in storage schema, `HttpSyncProvider` for real HTTP transport, enhanced sanitizer (email/IP stripping, day-rounded timestamps), `CORE_SET_CONTRIBUTION_CONSENT` / `CORE_GET_CONTRIBUTION_STATUS` messages, consent toggle in popup Data tab.
+4. **Phase D — Server infrastructure and public dashboard** `IN PROGRESS`: See below.
+
+### Phase D: Server Infrastructure and Public Dashboard
+
+#### D1 — API Server (`server/`)
+
+Technology: **Node.js + Express + SQLite** (lightweight, zero-dependency database, single-binary deployable).
+
+**API Endpoints:**
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/api/v1/reports` | Receive batched `SharedReport[]` from extension (matches `HttpSyncProvider` contract) |
+| `GET` | `/api/v1/stats/overview` | Global stats: total reports, unique domains, top threat categories |
+| `GET` | `/api/v1/stats/domains` | Worst offenders leaderboard: domains ranked by total threat count, filterable by category |
+| `GET` | `/api/v1/stats/categories` | Threat category breakdown: counts and trends per category |
+| `GET` | `/api/v1/stats/domain/:domain` | Per-domain detail: threat breakdown, severity score, historical trend |
+| `GET` | `/api/v1/health` | Health check |
+
+**Data Model (SQLite):**
+
+```sql
+CREATE TABLE reports (
+  id TEXT PRIMARY KEY,
+  domain TEXT NOT NULL,
+  category TEXT NOT NULL,
+  detector TEXT NOT NULL,
+  confidence TEXT NOT NULL,
+  blocked INTEGER NOT NULL,
+  mode TEXT NOT NULL,
+  ts INTEGER NOT NULL,          -- day-rounded UTC timestamp
+  evidence TEXT NOT NULL,       -- JSON array
+  client_schema_version INTEGER NOT NULL,
+  received_at INTEGER NOT NULL  -- server receive timestamp
+);
+
+CREATE INDEX idx_reports_domain ON reports(domain);
+CREATE INDEX idx_reports_category ON reports(category);
+CREATE INDEX idx_reports_ts ON reports(ts);
+```
+
+**Aggregation Views:**
+
+```sql
+-- Domain leaderboard (materialized via periodic query)
+SELECT domain,
+       COUNT(*) as total_threats,
+       COUNT(DISTINCT category) as unique_categories,
+       SUM(CASE WHEN confidence = 'high' THEN 1 ELSE 0 END) as high_confidence,
+       MIN(ts) as first_seen,
+       MAX(ts) as last_seen
+FROM reports
+GROUP BY domain
+ORDER BY total_threats DESC;
+
+-- Category breakdown
+SELECT category,
+       COUNT(*) as total,
+       COUNT(DISTINCT domain) as affected_domains,
+       ROUND(AVG(CASE WHEN blocked THEN 1.0 ELSE 0.0 END) * 100, 1) as block_rate_pct
+FROM reports
+GROUP BY category;
+```
+
+**Validation & Rate Limiting:**
+- Validate incoming reports against `SharedReport` schema (reject malformed)
+- Rate limit: 100 reports per IP per hour (prevent abuse/poisoning)
+- Deduplication: reject reports with duplicate `id` fields
+- Minimum aggregation threshold: domains must have reports from 5+ distinct days before appearing in public stats (k-anonymity)
+
+#### D2 — Public Dashboard (`dashboard/`)
+
+Technology: **React + Vite** (same React version as extension, shared familiarity).
+
+**Pages:**
+
+| Route | Content |
+|-------|---------|
+| `/` | Overview: total reports processed, domains tracked, category distribution donut chart, recent activity feed |
+| `/leaderboard` | Worst offenders table: sortable by threat count, filterable by category, searchable by domain |
+| `/domain/:domain` | Domain detail: threat breakdown bar chart, severity grade (A-F reusing `SiteReportCard` logic), historical trend line, list of detected technologies |
+| `/categories` | Category deep-dive: per-category stats, affected domain counts, block rate, explainer text (reuses `lib/explainers.ts` content) |
+| `/about` | Project explanation, methodology, privacy policy, link to extension |
+
+**Visualization:** Charts via lightweight inline SVG rendering (no heavy chart library). The dashboard is a static SPA that fetches from the API.
+
+#### D3 — Deployment
+
+- Server: single `node server/index.ts` process with SQLite file on disk
+- Dashboard: static build (`dashboard/dist/`) served by the same Express server or any CDN
+- Docker: single `Dockerfile` packages both server and dashboard build
+- Environment config via `.env`: `PORT`, `DATABASE_PATH`, `RATE_LIMIT_MAX`, `K_ANONYMITY_THRESHOLD`
 
 ### Privacy Guardrails
 
 - No raw URLs — only domains (via existing `core/services/domain.ts` normalization)
 - No user identifiers in contributed data
 - Timestamps rounded to day granularity
-- Minimum aggregation thresholds before data appears in public dashboard (k-anonymity)
+- Minimum aggregation thresholds before data appears in public dashboard (k-anonymity, default 5 distinct days)
 - Open-source sanitization logic so users can verify what is shared
+- Server stores no IP addresses or user-agent strings from report submissions
+- Rate limiting prevents data poisoning attacks
 
 ### Technical Considerations
 
 - Junk data injection in Manifest V3 is constrained by `declarativeNetRequest` — may require MAIN world content script injection for some spoofing (the existing `stealth.content.ts` MAIN world script is a precedent)
-- Backend should be designed stateless where possible to reduce operational burden
+- Backend uses SQLite for simplicity — can migrate to PostgreSQL if scale demands it
+- The extension's `HttpSyncProvider` endpoint must match the server's `POST /api/v1/reports` contract
+- Dashboard can be deployed independently of the server (static files + API URL config)
 - Consider using the existing `StorageStateV2` migration pattern for future schema changes to contribution data
 
 ## References
@@ -156,5 +251,8 @@ GRAPES detects threats (existing)
 - [ARCHITECTURE.md](/ARCHITECTURE.md) — Current extension architecture and stealth mode design
 - [EXTENSION_FLOW.md](/EXTENSION_FLOW.md) — Data flow and component responsibilities
 - [PROJECT_PLAN.md](/PROJECT_PLAN.md) — Original 4-phase implementation plan (phases 1–4 complete)
-- `core/sharing/` — Existing sharing infrastructure (provider, queue, sanitizer)
+- `core/sharing/` — Sharing infrastructure (provider, http-provider, queue, sanitizer)
+- `core/spoof/` — Junk data generators and API injector
 - `core/contracts/types.ts` — ThreatEvent and SharedReport type definitions
+- `lib/explainers.ts` — Threat category explainer content (reused in dashboard)
+- `lib/components/SiteReportCard.tsx` — Grade computation logic (reused in dashboard)

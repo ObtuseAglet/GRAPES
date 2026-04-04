@@ -27,3 +27,11 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Database
+*.db
+*.db-wal
+*.db-shm
+
+# Server build
+server/dist/
