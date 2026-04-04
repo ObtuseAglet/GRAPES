@@ -1,15 +1,14 @@
 import type { SharedReport } from '../contracts/types';
 import type { SyncProvider } from './provider';
 
-const DEFAULT_ENDPOINT = 'https://api.grapes-privacy.org/v1/reports';
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export class HttpSyncProvider implements SyncProvider {
-  private endpoint: string;
+  private endpoint = '';
   private consentGiven = false;
 
-  constructor(endpoint?: string) {
-    this.endpoint = endpoint || DEFAULT_ENDPOINT;
+  setEndpoint(url: string): void {
+    this.endpoint = url;
   }
 
   async setConsent(enabled: boolean): Promise<void> {
@@ -22,7 +21,7 @@ export class HttpSyncProvider implements SyncProvider {
   }
 
   async flushQueue(queue: SharedReport[]): Promise<{ synced: number }> {
-    if (!this.consentGiven || queue.length === 0) {
+    if (!this.consentGiven || queue.length === 0 || !this.endpoint) {
       return { synced: 0 };
     }
 

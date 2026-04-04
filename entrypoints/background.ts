@@ -40,7 +40,10 @@ let sharingQueue = new SharingQueueService(mockProvider);
  * Switch the sharing queue between mock (local-only) and HTTP provider
  * based on contribution consent state.
  */
-function updateSharingProvider(contributionEnabled: boolean): void {
+function updateSharingProvider(contributionEnabled: boolean, endpoint?: string): void {
+  if (endpoint) {
+    httpProvider.setEndpoint(endpoint);
+  }
   sharingQueue = new SharingQueueService(contributionEnabled ? httpProvider : mockProvider);
 }
 
@@ -318,7 +321,7 @@ async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
       };
       const nextState = { ...state, contribution: nextContrib };
       await setState(nextState);
-      updateSharingProvider(request.enabled);
+      updateSharingProvider(request.enabled, nextContrib.endpoint);
       return { ok: true, data: { success: true } };
     }
     case 'CORE_GET_CONTRIBUTION_STATUS':
@@ -327,8 +330,16 @@ async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
         data: {
           consentGiven: state.contribution.consentGiven,
           consentTimestamp: state.contribution.consentTimestamp,
+          endpoint: state.contribution.endpoint,
         },
       };
+    case 'CORE_SET_CONTRIBUTION_ENDPOINT': {
+      const nextContrib = { ...state.contribution, endpoint: request.endpoint };
+      const nextState = { ...state, contribution: nextContrib };
+      await setState(nextState);
+      httpProvider.setEndpoint(request.endpoint);
+      return { ok: true, data: { success: true } };
+    }
   }
 }
 
@@ -343,7 +354,7 @@ function createEnvelope() {
 
 export default defineBackground(() => {
   void ensureV2State().then((state) => {
-    updateSharingProvider(state.contribution?.consentGiven ?? false);
+    updateSharingProvider(state.contribution?.consentGiven ?? false, state.contribution?.endpoint);
   });
 
   browser.runtime.onInstalled.addListener(() => {

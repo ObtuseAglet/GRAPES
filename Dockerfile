@@ -28,11 +28,9 @@ COPY --from=dashboard-build /app/dashboard/dist ./dashboard/dist
 
 WORKDIR /app/server
 
-ENV PORT=3001
 ENV DASHBOARD_DIR=/app/dashboard/dist
 ENV DATABASE_PATH=/app/data/grapes.db
 
-VOLUME ["/app/data"]
-EXPOSE 3001
+EXPOSE ${PORT:-3001}
 
 CMD ["node", "dist/index.js"]

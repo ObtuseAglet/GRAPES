@@ -1065,7 +1065,9 @@ interface DataTabProps {
   onConsentChange: (enabled: boolean) => Promise<void>;
   onFlushQueue: () => Promise<void>;
   contributionConsent: boolean;
+  contributionEndpoint: string;
   onContributionChange: (enabled: boolean) => Promise<void>;
+  onEndpointChange: (endpoint: string) => Promise<void>;
 }
 
 function DataTab({
@@ -1077,8 +1079,13 @@ function DataTab({
   onConsentChange,
   onFlushQueue,
   contributionConsent,
+  contributionEndpoint,
   onContributionChange,
+  onEndpointChange,
 }: DataTabProps) {
+  const [endpointDraft, setEndpointDraft] = useState(contributionEndpoint);
+  const [endpointSaved, setEndpointSaved] = useState(false);
+
   return (
     <div className="tab-content">
       <div className="setting-section">
@@ -1095,6 +1102,38 @@ function DataTab({
           When enabled, GRAPES sends anonymized reports (domain + threat type only, no personal
           data) to build a public dashboard of the worst surveillance offenders on the web. You can
           opt out at any time.
+        </div>
+        <div className="setting-label" style={{ marginTop: '12px' }}>
+          Server URL
+        </div>
+        <div className="btn-row">
+          <input
+            type="text"
+            className="style-input"
+            value={endpointDraft}
+            onChange={(e) => {
+              setEndpointDraft(e.target.value);
+              setEndpointSaved(false);
+            }}
+            placeholder="https://your-app.up.railway.app/api/v1/reports"
+            style={{ marginTop: 0 }}
+          />
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={async () => {
+              await onEndpointChange(endpointDraft.trim());
+              setEndpointSaved(true);
+            }}
+          >
+            Save
+          </button>
+        </div>
+        {endpointSaved && (
+          <div className="setting-feedback success">Endpoint saved.</div>
+        )}
+        <div className="setting-hint">
+          Your GRAPES dashboard server URL. Deploy with Railway then paste the URL here.
         </div>
       </div>
 
@@ -1132,6 +1171,7 @@ function PopupApp() {
   const [queueLength, setQueueLength] = useState(0);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
   const [contributionConsent, setContributionConsent] = useState(false);
+  const [contributionEndpoint, setContributionEndpoint] = useState('');
   const [showResetNotice, setShowResetNotice] = useState(false);
 
   useEffect(() => {
@@ -1179,6 +1219,7 @@ function PopupApp() {
           });
           if (contribStatus?.ok) {
             setContributionConsent(contribStatus.data.consentGiven);
+            setContributionEndpoint(contribStatus.data.endpoint || '');
           }
         } catch {
           // Ignore if core router is unavailable during compatibility window.
@@ -1334,6 +1375,20 @@ function PopupApp() {
     }
   }
 
+  async function handleEndpointChange(endpoint: string): Promise<void> {
+    const response = await browser.runtime.sendMessage({
+      type: 'CORE_SET_CONTRIBUTION_ENDPOINT',
+      endpoint,
+      requestId: `popup-endpoint-${Date.now()}`,
+      source: 'popup',
+      timestamp: Date.now(),
+      schemaVersion: 2,
+    });
+    if (response?.ok) {
+      setContributionEndpoint(endpoint);
+    }
+  }
+
   async function handleFlushQueue(): Promise<void> {
     const response = await browser.runtime.sendMessage({
       type: 'CORE_FLUSH_SHARING_QUEUE',
@@ -1433,7 +1488,9 @@ function PopupApp() {
           onConsentChange={handleSharingConsent}
           onFlushQueue={handleFlushQueue}
           contributionConsent={contributionConsent}
+          contributionEndpoint={contributionEndpoint}
           onContributionChange={handleContributionChange}
+          onEndpointChange={handleEndpointChange}
         />
       )}
       {currentTab === 'edit' && (
