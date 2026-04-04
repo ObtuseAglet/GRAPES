@@ -1,6 +1,6 @@
 export const SCHEMA_VERSION = 2 as const;
 
-export type ProtectionMode = 'full' | 'detection-only' | 'disabled';
+export type ProtectionMode = 'full' | 'detection-only' | 'disabled' | 'spoof';
 export type SitePolicy = 'enabled' | 'disabled' | 'default';
 
 export type ThreatCategory =

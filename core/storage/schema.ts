@@ -1,7 +1,7 @@
-import type { CustomStyles, GrapesPreferences } from '../../lib/types';
-import { SCHEMA_VERSION, type ProtectionMode, type SitePolicy } from '../contracts/types';
 import type { EditorRule } from '../../features/editor/rules';
+import type { CustomStyles, GrapesPreferences } from '../../lib/types';
 import type { SharedReport, ThreatEvent } from '../contracts/types';
+import { type ProtectionMode, SCHEMA_VERSION, type SitePolicy } from '../contracts/types';
 
 export interface CoreSettings {
   schemaVersion: number;
@@ -32,6 +32,24 @@ export interface InstallState {
   resetTimestamp: number;
 }
 
+export interface ContributionSettings {
+  /** User explicitly opted in to contribute anonymized data. */
+  consentGiven: boolean;
+  /** Timestamp of when consent was granted (0 if never). */
+  consentTimestamp: number;
+  /** API endpoint for submitting reports (empty = default). */
+  endpoint: string;
+  /** How often to batch-upload, in minutes. */
+  uploadIntervalMinutes: number;
+}
+
+export const DEFAULT_CONTRIBUTION_SETTINGS: ContributionSettings = {
+  consentGiven: false,
+  consentTimestamp: 0,
+  endpoint: '',
+  uploadIntervalMinutes: 60,
+};
+
 export interface StorageStateV2 {
   coreSettings: CoreSettings;
   sitePolicy: SitePolicyMap;
@@ -45,6 +63,7 @@ export interface StorageStateV2 {
   };
   logs: ThreatEvent[];
   sharing: SharingState;
+  contribution: ContributionSettings;
   installState: InstallState;
 }
 
@@ -76,6 +95,7 @@ export const DEFAULT_STORAGE_STATE_V2: StorageStateV2 = {
     nextRetryAt: null,
     lastSyncAt: null,
   },
+  contribution: { ...DEFAULT_CONTRIBUTION_SETTINGS },
   installState: {
     schemaVersion: SCHEMA_VERSION,
     hardResetApplied: false,

@@ -23,13 +23,24 @@ export default defineContentScript({
     // before content.ts can check storage and potentially disable it
     let protectionEnabled = true;
 
+    // Whether spoof mode is active (inject junk data into tracking APIs)
+    let spoofModeActive = false;
+    let spoofInstalled = false;
+
     // Listen for protection mode changes from content.ts (ISOLATED world)
     window.addEventListener('grapes-set-protection-mode', (event: Event) => {
       const customEvent = event as CustomEvent;
       try {
-        const { enabled } = JSON.parse(customEvent.detail);
+        const { enabled, spoof } = JSON.parse(customEvent.detail);
         protectionEnabled = enabled;
-        console.log(`[GRAPES Stealth] Protection mode set to: ${enabled ? 'enabled' : 'disabled'}`);
+        spoofModeActive = !!spoof;
+        console.log(
+          `[GRAPES Stealth] Protection mode set to: ${enabled ? 'enabled' : 'disabled'}${spoofModeActive ? ' (spoof)' : ''}`,
+        );
+        if (spoofModeActive && !spoofInstalled) {
+          installSpoofOverrides();
+          spoofInstalled = true;
+        }
       } catch (e) {
         console.error('[GRAPES Stealth] Error parsing protection mode event:', e);
       }
@@ -1743,6 +1754,143 @@ export default defineContentScript({
       document.addEventListener('DOMContentLoaded', startTrackingObserver);
     } else {
       startTrackingObserver();
+    }
+
+    // ------------------------------------------------------------------
+    // Spoof mode: replace browser APIs with junk-data-returning versions
+    // ------------------------------------------------------------------
+
+    const SPOOF_SCREENS: [number, number][] = [
+      [1920, 1080],
+      [1366, 768],
+      [1536, 864],
+      [1440, 900],
+      [1280, 720],
+      [2560, 1440],
+      [3840, 2160],
+      [1600, 900],
+    ];
+    const SPOOF_TZ = [
+      'America/New_York',
+      'America/Chicago',
+      'America/Denver',
+      'America/Los_Angeles',
+      'Europe/London',
+      'Europe/Berlin',
+      'Asia/Tokyo',
+      'Australia/Sydney',
+    ];
+    const SPOOF_LANG = ['en-US', 'en-GB', 'fr-FR', 'de-DE', 'es-ES', 'ja-JP', 'pt-BR'];
+    const SPOOF_PLAT = ['Win32', 'MacIntel', 'Linux x86_64'];
+    const SPOOF_GPU = [
+      'ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)',
+      'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060, OpenGL 4.5)',
+      'ANGLE (AMD, AMD Radeon RX 580, OpenGL 4.5)',
+      'ANGLE (Apple, Apple M1, OpenGL 4.1)',
+    ];
+
+    function spoofPick<T>(arr: T[]): T {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+    function spoofRandInt(a: number, b: number) {
+      return Math.floor(Math.random() * (b - a + 1)) + a;
+    }
+    function spoofHex(n: number) {
+      let s = '';
+      for (let i = 0; i < n; i++) s += Math.floor(Math.random() * 16).toString(16);
+      return s;
+    }
+
+    function installSpoofOverrides() {
+      const [sw, sh] = spoofPick(SPOOF_SCREENS);
+      const tz = spoofPick(SPOOF_TZ);
+      const lang = spoofPick(SPOOF_LANG);
+      const plat = spoofPick(SPOOF_PLAT);
+      const gpu = spoofPick(SPOOF_GPU);
+      const cores = spoofPick([2, 4, 6, 8, 12, 16]);
+      const mem = spoofPick([2, 4, 8, 16]);
+
+      // Navigator overrides
+      const navProps: Record<string, unknown> = {
+        hardwareConcurrency: cores,
+        deviceMemory: mem,
+        language: lang,
+        languages: [lang, lang.split('-')[0]],
+        platform: plat,
+      };
+      for (const [k, v] of Object.entries(navProps)) {
+        try {
+          Object.defineProperty(Navigator.prototype, k, {
+            get() {
+              return v;
+            },
+            configurable: true,
+          });
+        } catch {}
+      }
+
+      // Screen overrides
+      const scrProps: Record<string, number> = {
+        width: sw,
+        height: sh,
+        availWidth: sw,
+        availHeight: sh - 40,
+        colorDepth: 24,
+        pixelDepth: 24,
+      };
+      for (const [k, v] of Object.entries(scrProps)) {
+        try {
+          Object.defineProperty(Screen.prototype, k, {
+            get() {
+              return v;
+            },
+            configurable: true,
+          });
+        } catch {}
+      }
+
+      // Canvas noise
+      const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+      HTMLCanvasElement.prototype.toDataURL = function (...args: Parameters<typeof origToDataURL>) {
+        const ctx = this.getContext('2d');
+        if (ctx) {
+          try {
+            const d = ctx.getImageData(0, 0, this.width, this.height);
+            for (let i = 0; i < d.data.length; i += 4) {
+              d.data[i] = Math.min(255, Math.max(0, d.data[i] + spoofRandInt(-2, 2)));
+              d.data[i + 1] = Math.min(255, Math.max(0, d.data[i + 1] + spoofRandInt(-2, 2)));
+              d.data[i + 2] = Math.min(255, Math.max(0, d.data[i + 2] + spoofRandInt(-2, 2)));
+            }
+            ctx.putImageData(d, 0, 0);
+          } catch {}
+        }
+        return origToDataURL.apply(this, args);
+      };
+
+      // WebGL renderer spoofing
+      const origGetParam = WebGLRenderingContext.prototype.getParameter;
+      WebGLRenderingContext.prototype.getParameter = function (pname: GLenum) {
+        if (pname === 0x9246) return gpu;
+        if (pname === 0x9245) return 'Google Inc.';
+        return origGetParam.call(this, pname);
+      };
+      try {
+        const origGetParam2 = WebGL2RenderingContext.prototype.getParameter;
+        WebGL2RenderingContext.prototype.getParameter = function (pname: GLenum) {
+          if (pname === 0x9246) return gpu;
+          if (pname === 0x9245) return 'Google Inc.';
+          return origGetParam2.call(this, pname);
+        };
+      } catch {}
+
+      // Timezone spoofing
+      const origResolved = Intl.DateTimeFormat.prototype.resolvedOptions;
+      Intl.DateTimeFormat.prototype.resolvedOptions = function () {
+        const opts = origResolved.call(this);
+        return { ...opts, timeZone: tz };
+      };
+
+      console.log('[GRAPES] Spoof overrides installed — returning junk data to trackers');
     }
 
     console.log('[GRAPES] Stealth mode activated - MutationObserver intercepted');

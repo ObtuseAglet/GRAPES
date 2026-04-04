@@ -1,7 +1,7 @@
 import type { ProtectionMode } from '../contracts/types';
 
 export function isProtectionEnabled(mode: ProtectionMode): boolean {
-  return mode === 'full';
+  return mode === 'full' || mode === 'spoof';
 }
 
 export function shouldDetect(mode: ProtectionMode): boolean {

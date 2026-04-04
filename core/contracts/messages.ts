@@ -1,3 +1,5 @@
+import type { EditorRule } from '../../features/editor/rules';
+import type { StorageStateV2 } from '../storage/schema';
 import type {
   BusEnvelope,
   ProtectionMode,
@@ -6,8 +8,6 @@ import type {
   SitePolicy,
   ThreatEvent,
 } from './types';
-import type { StorageStateV2 } from '../storage/schema';
-import type { EditorRule } from '../../features/editor/rules';
 
 export type CoreRequest =
   | (BusEnvelope & { type: 'CORE_GET_STATE' })
@@ -22,11 +22,14 @@ export type CoreRequest =
   | (BusEnvelope & { type: 'CORE_FLUSH_SHARING_QUEUE' })
   | (BusEnvelope & { type: 'CORE_GET_SHARING_STATUS' })
   | (BusEnvelope & { type: 'CORE_REPORT_THREAT'; event: ThreatEvent })
-  | (BusEnvelope & { type: 'CORE_QUEUE_REPORT'; report: SharedReport });
+  | (BusEnvelope & { type: 'CORE_QUEUE_REPORT'; report: SharedReport })
+  | (BusEnvelope & { type: 'CORE_SET_CONTRIBUTION_CONSENT'; enabled: boolean })
+  | (BusEnvelope & { type: 'CORE_GET_CONTRIBUTION_STATUS' });
 
 export type CoreResponse =
   | Result<StorageStateV2>
   | Result<{ success: true }>
   | Result<ThreatEvent[]>
   | Result<SharedReport[]>
-  | Result<{ consent: boolean; queueLength: number; lastSyncAt: number | null }>;
+  | Result<{ consent: boolean; queueLength: number; lastSyncAt: number | null }>
+  | Result<{ consentGiven: boolean; consentTimestamp: number }>;

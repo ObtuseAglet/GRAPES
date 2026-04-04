@@ -1,19 +1,25 @@
 import type { CoreRequest, CoreResponse } from '../core/contracts/messages';
-import { SCHEMA_VERSION, type ProtectionMode, type ThreatCategory, type ThreatEvent } from '../core/contracts/types';
+import {
+  type ProtectionMode,
+  SCHEMA_VERSION,
+  type ThreatCategory,
+  type ThreatEvent,
+} from '../core/contracts/types';
 import { isCoreRequest } from '../core/contracts/validators';
 import { normalizeLegacyDetectionType } from '../core/detection/normalize';
 import { ThreatLogStore } from '../core/logging/log-store';
+import { extractBaseDomain } from '../core/services/domain';
+import { getProtectionStatusForDomain } from '../core/services/policy';
+import { HttpSyncProvider } from '../core/sharing/http-provider';
 import { MockSyncProvider } from '../core/sharing/provider';
 import { SharingQueueService } from '../core/sharing/queue';
 import { toSharedReport } from '../core/sharing/sanitizer';
 import {
   DEFAULT_STORAGE_STATE_V2,
   fromLegacyPreferences,
-  toLegacyPreferences,
   type StorageStateV2,
+  toLegacyPreferences,
 } from '../core/storage/schema';
-import { extractBaseDomain } from '../core/services/domain';
-import { getProtectionStatusForDomain } from '../core/services/policy';
 import type {
   GrapesPreferences,
   SurveillanceData,
@@ -26,7 +32,17 @@ const INSTALL_MARKER_KEY = 'v2_install_state';
 const LEGACY_LOGS_KEY = 'surveillanceLogs';
 
 const logStore = new ThreatLogStore();
-const sharingQueue = new SharingQueueService(new MockSyncProvider());
+const mockProvider = new MockSyncProvider();
+const httpProvider = new HttpSyncProvider();
+let sharingQueue = new SharingQueueService(mockProvider);
+
+/**
+ * Switch the sharing queue between mock (local-only) and HTTP provider
+ * based on contribution consent state.
+ */
+function updateSharingProvider(contributionEnabled: boolean): void {
+  sharingQueue = new SharingQueueService(contributionEnabled ? httpProvider : mockProvider);
+}
 
 const tabSurveillance: Map<number, SurveillanceData> = new Map();
 const tabLogEntries: Map<number, SurveillanceLogEntry> = new Map();
@@ -178,7 +194,10 @@ function mergeSurveillanceEvents(
   return [...existing];
 }
 
-function mergeManyEvents(existing: SurveillanceEvent[], incoming: SurveillanceEvent[]): SurveillanceEvent[] {
+function mergeManyEvents(
+  existing: SurveillanceEvent[],
+  incoming: SurveillanceEvent[],
+): SurveillanceEvent[] {
   let next = [...existing];
   for (const event of incoming) {
     next = mergeSurveillanceEvents(next, event);
@@ -291,6 +310,25 @@ async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
     case 'CORE_QUEUE_REPORT':
       await sharingQueue.enqueue(request.report);
       return { ok: true, data: { success: true } };
+    case 'CORE_SET_CONTRIBUTION_CONSENT': {
+      const nextContrib = {
+        ...state.contribution,
+        consentGiven: request.enabled,
+        consentTimestamp: request.enabled ? Date.now() : state.contribution.consentTimestamp,
+      };
+      const nextState = { ...state, contribution: nextContrib };
+      await setState(nextState);
+      updateSharingProvider(request.enabled);
+      return { ok: true, data: { success: true } };
+    }
+    case 'CORE_GET_CONTRIBUTION_STATUS':
+      return {
+        ok: true,
+        data: {
+          consentGiven: state.contribution.consentGiven,
+          consentTimestamp: state.contribution.consentTimestamp,
+        },
+      };
   }
 }
 
@@ -304,7 +342,9 @@ function createEnvelope() {
 }
 
 export default defineBackground(() => {
-  void ensureV2State();
+  void ensureV2State().then((state) => {
+    updateSharingProvider(state.contribution?.consentGiven ?? false);
+  });
 
   browser.runtime.onInstalled.addListener(() => {
     void ensureV2State();
@@ -332,10 +372,8 @@ export default defineBackground(() => {
           return { ok: false, error: 'unknown-detection-type' };
         }
 
-        const evidence =
-          message.data?.tools ||
-          message.data?.types ||
-          [message.data?.targetType || 'detected'];
+        const evidence = message.data?.tools ||
+          message.data?.types || [message.data?.targetType || 'detected'];
         const event = buildEvent(
           sender.tab!.id!,
           sender.tab!.url!,
@@ -366,7 +404,9 @@ export default defineBackground(() => {
       return Promise.resolve(message.tabId ? tabLogEntries.get(message.tabId) || null : null);
     }
     if (message.type === 'GET_ALL_LOGS') {
-      return browser.storage.local.get([LEGACY_LOGS_KEY]).then((result) => result[LEGACY_LOGS_KEY] || []);
+      return browser.storage.local
+        .get([LEGACY_LOGS_KEY])
+        .then((result) => result[LEGACY_LOGS_KEY] || []);
     }
     if (message.type === 'CLEAR_LOGS') {
       return handleCoreRequest({
