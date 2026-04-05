@@ -4,6 +4,7 @@ import { Categories } from './pages/Categories';
 import { DomainView } from './pages/DomainView';
 import { Leaderboard } from './pages/Leaderboard';
 import { Overview } from './pages/Overview';
+import { ProtectionPolicy } from './pages/ProtectionPolicy';
 import { ReviewRequest } from './pages/ReviewRequest';
 
 type Page =
@@ -11,6 +12,7 @@ type Page =
   | { id: 'leaderboard' }
   | { id: 'categories' }
   | { id: 'domain'; domain: string }
+  | { id: 'protection-policy' }
   | { id: 'review-request' }
   | { id: 'about' };
 
@@ -52,6 +54,13 @@ export function App() {
           </button>
           <button
             type="button"
+            className={`nav-link ${page.id === 'protection-policy' ? 'active' : ''}`}
+            onClick={() => navigate({ id: 'protection-policy' })}
+          >
+            Protection Policy
+          </button>
+          <button
+            type="button"
             className={`nav-link ${page.id === 'review-request' ? 'active' : ''}`}
             onClick={() => navigate({ id: 'review-request' })}
           >
@@ -77,6 +86,9 @@ export function App() {
         {page.id === 'categories' && <Categories />}
         {page.id === 'domain' && (
           <DomainView domain={page.domain} onBack={() => navigate({ id: 'leaderboard' })} />
+        )}
+        {page.id === 'protection-policy' && (
+          <ProtectionPolicy onRequestReview={() => navigate({ id: 'review-request' })} />
         )}
         {page.id === 'review-request' && <ReviewRequest />}
         {page.id === 'about' && <About />}

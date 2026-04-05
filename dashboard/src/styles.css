@@ -474,6 +474,155 @@ body {
   margin-bottom: 4px;
 }
 
+/* Protection Policy page */
+.policy-principles {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.policy-principle {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  font-size: 14px;
+  color: #bbb;
+  line-height: 1.6;
+}
+
+.policy-principle-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(102, 126, 234, 0.2);
+  color: #667eea;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.policy-section-desc {
+  font-size: 14px;
+  color: #999;
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.policy-category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.policy-category-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 10px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.policy-category-card h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.policy-category-card p {
+  font-size: 13px;
+  color: #888;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+.policy-blocked {
+  border-color: rgba(231, 76, 60, 0.2);
+}
+
+.policy-blocked h3 {
+  color: #e74c3c;
+}
+
+.policy-allowed {
+  border-color: rgba(39, 174, 96, 0.2);
+}
+
+.policy-allowed h3 {
+  color: #27ae60;
+}
+
+.policy-domains {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.policy-domains span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #aaa;
+}
+
+.policy-blocked .policy-domains span {
+  background: rgba(231, 76, 60, 0.1);
+  color: #e88;
+}
+
+.policy-allowed .policy-domains span {
+  background: rgba(39, 174, 96, 0.1);
+  color: #6dbb8a;
+}
+
+.policy-also {
+  font-size: 13px;
+  color: #888;
+  line-height: 1.6;
+}
+
+.policy-also code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 5px;
+  border-radius: 3px;
+  color: #ccc;
+}
+
+.policy-criteria-table td,
+.policy-criteria-table th {
+  vertical-align: top;
+}
+
+.policy-cell-bad {
+  color: #e74c3c;
+}
+
+.policy-cell-good {
+  color: #27ae60;
+}
+
+.policy-cta {
+  text-align: center;
+}
+
+.policy-cta h2 {
+  margin-bottom: 10px;
+}
+
+.policy-cta p {
+  font-size: 14px;
+  color: #999;
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
 /* Review Request page */
 .review-info-cards {
   display: grid;
