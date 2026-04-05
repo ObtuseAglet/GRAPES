@@ -52,4 +52,23 @@ export const api = {
   categories: () => fetchJson<CategoryStats[]>(`${BASE}/stats/categories`),
 
   domain: (domain: string) => fetchJson<DomainDetail>(`${BASE}/stats/domain/${encodeURIComponent(domain)}`),
+
+  submitReviewRequest: async (data: ReviewRequestPayload): Promise<{ id: number; message: string }> => {
+    const res = await fetch(`${BASE}/review-requests`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `${res.status} ${res.statusText}`);
+    return body as { id: number; message: string };
+  },
 };
+
+export interface ReviewRequestPayload {
+  domain: string;
+  companyName: string;
+  contactEmail: string;
+  serviceType: string;
+  description: string;
+}

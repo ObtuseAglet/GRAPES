@@ -35,6 +35,21 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_reports_category ON reports(category);
     CREATE INDEX IF NOT EXISTS idx_reports_ts ON reports(ts);
     CREATE INDEX IF NOT EXISTS idx_reports_domain_ts ON reports(domain, ts);
+
+    CREATE TABLE IF NOT EXISTS review_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      domain TEXT NOT NULL,
+      company_name TEXT NOT NULL,
+      contact_email TEXT NOT NULL,
+      service_type TEXT NOT NULL,
+      description TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      submitted_at INTEGER NOT NULL,
+      reviewed_at INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_review_requests_status ON review_requests(status);
+    CREATE INDEX IF NOT EXISTS idx_review_requests_domain ON review_requests(domain);
   `);
 }
 
@@ -251,6 +266,62 @@ export function getDomainDetail(domain: string): DomainDetail | null {
     timeline: timeline.reverse(),
     detectors,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Review requests — allow companies to request unblocking for functional services
+// ---------------------------------------------------------------------------
+
+export interface ReviewRequest {
+  domain: string;
+  companyName: string;
+  contactEmail: string;
+  serviceType: string;
+  description: string;
+}
+
+export interface StoredReviewRequest extends ReviewRequest {
+  id: number;
+  status: 'pending' | 'approved' | 'rejected';
+  submittedAt: number;
+  reviewedAt: number | null;
+}
+
+export function insertReviewRequest(req: ReviewRequest): { id: number } {
+  const database = getDb();
+  const result = database.prepare(`
+    INSERT INTO review_requests (domain, company_name, contact_email, service_type, description, status, submitted_at)
+    VALUES (?, ?, ?, ?, ?, 'pending', ?)
+  `).run(
+    req.domain,
+    req.companyName,
+    req.contactEmail,
+    req.serviceType,
+    req.description,
+    Date.now(),
+  );
+  return { id: result.lastInsertRowid as number };
+}
+
+export function getReviewRequests(status?: string): StoredReviewRequest[] {
+  const database = getDb();
+
+  let query = `
+    SELECT id, domain, company_name as companyName, contact_email as contactEmail,
+           service_type as serviceType, description, status,
+           submitted_at as submittedAt, reviewed_at as reviewedAt
+    FROM review_requests
+  `;
+  const params: unknown[] = [];
+
+  if (status) {
+    query += ' WHERE status = ?';
+    params.push(status);
+  }
+
+  query += ' ORDER BY submitted_at DESC LIMIT 200';
+
+  return database.prepare(query).all(...params) as StoredReviewRequest[];
 }
 
 export function closeDb(): void {

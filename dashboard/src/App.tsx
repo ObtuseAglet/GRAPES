@@ -4,12 +4,14 @@ import { Categories } from './pages/Categories';
 import { DomainView } from './pages/DomainView';
 import { Leaderboard } from './pages/Leaderboard';
 import { Overview } from './pages/Overview';
+import { ReviewRequest } from './pages/ReviewRequest';
 
 type Page =
   | { id: 'overview' }
   | { id: 'leaderboard' }
   | { id: 'categories' }
   | { id: 'domain'; domain: string }
+  | { id: 'review-request' }
   | { id: 'about' };
 
 export function App() {
@@ -50,6 +52,13 @@ export function App() {
           </button>
           <button
             type="button"
+            className={`nav-link ${page.id === 'review-request' ? 'active' : ''}`}
+            onClick={() => navigate({ id: 'review-request' })}
+          >
+            Request Review
+          </button>
+          <button
+            type="button"
             className={`nav-link ${page.id === 'about' ? 'active' : ''}`}
             onClick={() => navigate({ id: 'about' })}
           >
@@ -69,6 +78,7 @@ export function App() {
         {page.id === 'domain' && (
           <DomainView domain={page.domain} onBack={() => navigate({ id: 'leaderboard' })} />
         )}
+        {page.id === 'review-request' && <ReviewRequest />}
         {page.id === 'about' && <About />}
       </main>
 

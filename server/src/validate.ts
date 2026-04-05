@@ -1,4 +1,4 @@
-import type { IncomingReport } from './db.js';
+import type { IncomingReport, ReviewRequest } from './db.js';
 
 const VALID_CATEGORIES = new Set([
   'dom-monitoring',
@@ -105,4 +105,74 @@ export function validateReportBatch(body: unknown): {
   }
 
   return { ok: true, reports: validated };
+}
+
+// ---------------------------------------------------------------------------
+// Review request validation
+// ---------------------------------------------------------------------------
+
+const VALID_SERVICE_TYPES = new Set([
+  'error-monitoring',
+  'log-aggregation',
+  'customer-support',
+  'performance-monitoring',
+  'other',
+]);
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_COMPANY_NAME = 200;
+const MAX_DESCRIPTION = 2000;
+
+export function validateReviewRequest(body: unknown): {
+  ok: true;
+  request: ReviewRequest;
+} | {
+  ok: false;
+  error: string;
+} {
+  if (!body || typeof body !== 'object') {
+    return { ok: false, error: 'Request body must be an object' };
+  }
+
+  const obj = body as Record<string, unknown>;
+
+  // Domain
+  if (typeof obj.domain !== 'string' || obj.domain.length === 0 || obj.domain.length > MAX_DOMAIN_LENGTH) {
+    return { ok: false, error: 'Invalid or missing domain' };
+  }
+  const domain = obj.domain.trim().toLowerCase();
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(domain)) {
+    return { ok: false, error: 'Domain must be a valid hostname (e.g. sentry.io)' };
+  }
+
+  // Company name
+  if (typeof obj.companyName !== 'string' || obj.companyName.trim().length === 0 || obj.companyName.length > MAX_COMPANY_NAME) {
+    return { ok: false, error: 'Invalid or missing company name (max 200 chars)' };
+  }
+
+  // Contact email
+  if (typeof obj.contactEmail !== 'string' || !EMAIL_RE.test(obj.contactEmail.trim())) {
+    return { ok: false, error: 'Invalid or missing contact email' };
+  }
+
+  // Service type
+  if (typeof obj.serviceType !== 'string' || !VALID_SERVICE_TYPES.has(obj.serviceType)) {
+    return { ok: false, error: `Invalid service type. Must be one of: ${[...VALID_SERVICE_TYPES].join(', ')}` };
+  }
+
+  // Description
+  if (typeof obj.description !== 'string' || obj.description.trim().length === 0 || obj.description.length > MAX_DESCRIPTION) {
+    return { ok: false, error: 'Invalid or missing description (max 2000 chars)' };
+  }
+
+  return {
+    ok: true,
+    request: {
+      domain,
+      companyName: obj.companyName.trim(),
+      contactEmail: obj.contactEmail.trim().toLowerCase(),
+      serviceType: obj.serviceType,
+      description: obj.description.trim(),
+    },
+  };
 }

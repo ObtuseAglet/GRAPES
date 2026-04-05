@@ -474,6 +474,148 @@ body {
   margin-bottom: 4px;
 }
 
+/* Review Request page */
+.review-info-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.review-info-card {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.review-info-icon {
+  font-size: 28px;
+  margin-bottom: 10px;
+}
+
+.review-info-card h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.review-info-card p {
+  font-size: 13px;
+  color: #999;
+  line-height: 1.6;
+}
+
+.review-form {
+  background: #1a1a2e;
+  border-radius: 12px;
+  padding: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.review-form h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 20px;
+}
+
+.review-field {
+  margin-bottom: 20px;
+}
+
+.review-field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ccc;
+  margin-bottom: 6px;
+}
+
+.review-field .filter-input,
+.review-field .filter-select {
+  width: 100%;
+}
+
+.review-hint {
+  display: block;
+  font-size: 11px;
+  color: #666;
+  margin-top: 4px;
+}
+
+.review-textarea {
+  resize: vertical;
+  min-height: 100px;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.review-submit-btn {
+  padding: 12px 28px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.review-submit-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4);
+}
+
+.review-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.review-success {
+  background: #1a1a2e;
+  border-radius: 12px;
+  padding: 40px;
+  text-align: center;
+  border: 1px solid rgba(39, 174, 96, 0.3);
+  margin-top: 20px;
+}
+
+.review-success-icon {
+  width: 56px;
+  height: 56px;
+  background: rgba(39, 174, 96, 0.2);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  color: #27ae60;
+  margin-bottom: 16px;
+}
+
+.review-success h2 {
+  font-size: 20px;
+  color: #fff;
+  margin-bottom: 12px;
+}
+
+.review-success p {
+  font-size: 14px;
+  color: #bbb;
+  line-height: 1.7;
+  margin-bottom: 8px;
+}
+
+.review-success-note {
+  font-size: 13px;
+  color: #888;
+  margin-top: 16px;
+  margin-bottom: 20px;
+}
+
 /* Utility */
 .loading {
   text-align: center;
