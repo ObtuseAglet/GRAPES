@@ -263,14 +263,14 @@ function Header({ preferences, currentDomain }: HeaderProps) {
 
   return (
     <>
-      <header className="popup-header">
+      <header className="popup-header" role="banner">
         <div className="popup-title">
-          <span className="popup-logo">🍇</span> GRAPES
+          <span className="popup-logo" role="img" aria-label="GRAPES">🍇</span> GRAPES
         </div>
         <StatusBadge color={statusColor} text={statusText} />
       </header>
       <div className="domain-info">
-        <div className="domain-name">{currentDomain || 'Unknown'}</div>
+        <div className="domain-name" aria-label={`Current site: ${currentDomain || 'Unknown'}`}>{currentDomain || 'Unknown'}</div>
       </div>
     </>
   );
@@ -291,12 +291,19 @@ function TabNav({ currentTab, onTabChange, cssCustomizationEnabled }: TabNavProp
     { id: 'data', label: '📊 Data' },
   ];
 
+  // If current tab was removed (e.g. CSS flag turned off while on edit), fall back
+  if (!tabs.find((t) => t.id === currentTab)) {
+    onTabChange('now');
+  }
+
   return (
-    <div className="popup-tabs">
+    <div className="popup-tabs" role="tablist">
       {tabs.map((tab) => (
         <button
           key={tab.id}
           type="button"
+          role="tab"
+          aria-selected={currentTab === tab.id}
           className={`tab-btn ${currentTab === tab.id ? 'active' : ''}`}
           onClick={() => onTabChange(tab.id)}
         >

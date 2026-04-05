@@ -26,7 +26,7 @@ export function App() {
 
   return (
     <div className="app">
-      <nav className="nav">
+      <nav className="nav" role="navigation" aria-label="Main navigation">
         <div className="nav-brand" onClick={() => navigate({ id: 'overview' })}>
           <span className="nav-logo">🍇</span> GRAPES
         </div>
@@ -40,7 +40,7 @@ export function App() {
           </button>
           <button
             type="button"
-            className={`nav-link ${page.id === 'leaderboard' ? 'active' : ''}`}
+            className={`nav-link ${page.id === 'leaderboard' || page.id === 'domain' ? 'active' : ''}`}
             onClick={() => navigate({ id: 'leaderboard' })}
           >
             Leaderboard
