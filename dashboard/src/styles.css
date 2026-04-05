@@ -208,8 +208,14 @@ a:focus-visible {
   cursor: pointer;
 }
 
-.data-table tr.clickable:hover td {
-  background: rgba(102, 126, 234, 0.1);
+.data-table tr.clickable:hover td,
+.data-table tr.clickable:focus-visible td {
+  background: rgba(102, 126, 234, 0.15);
+}
+
+.data-table tr.clickable:focus-visible {
+  outline: 2px solid var(--gd-primary);
+  outline-offset: -2px;
 }
 
 .domain-cell {
@@ -729,6 +735,11 @@ a:focus-visible {
   margin-top: 4px;
 }
 
+.review-required {
+  color: #e74c3c;
+  font-weight: 700;
+}
+
 .review-textarea {
   resize: vertical;
   min-height: 100px;
@@ -804,20 +815,39 @@ a:focus-visible {
 .loading {
   text-align: center;
   padding: 40px;
-  color: #888;
+  color: var(--gd-text-muted);
+  font-size: 14px;
+}
+
+.loading::before {
+  content: '';
+  display: block;
+  width: 28px;
+  height: 28px;
+  margin: 0 auto 12px;
+  border: 3px solid rgba(102, 126, 234, 0.2);
+  border-top-color: var(--gd-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .empty {
   text-align: center;
-  padding: 20px;
-  color: #666;
+  padding: 24px 16px;
+  color: var(--gd-text-muted);
   font-size: 13px;
+  line-height: 1.5;
 }
 
 .error-msg {
   padding: 16px;
   background: rgba(231, 76, 60, 0.15);
   border: 1px solid rgba(231, 76, 60, 0.3);
+  border-left: 4px solid var(--gd-danger);
   border-radius: 8px;
   color: #e74c3c;
   font-size: 13px;

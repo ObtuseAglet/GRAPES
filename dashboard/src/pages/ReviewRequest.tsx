@@ -108,13 +108,14 @@ export function ReviewRequest() {
         )}
 
         <div className="review-field">
-          <label htmlFor="rr-domain">Domain</label>
+          <label htmlFor="rr-domain">Domain <span className="review-required" aria-hidden="true">*</span></label>
           <input
             id="rr-domain"
             type="text"
             className="filter-input"
             placeholder="e.g. sentry.io"
             required
+            aria-required="true"
             maxLength={253}
             value={form.domain}
             onChange={(e) => updateField('domain', e.target.value)}
@@ -123,13 +124,14 @@ export function ReviewRequest() {
         </div>
 
         <div className="review-field">
-          <label htmlFor="rr-company">Company Name</label>
+          <label htmlFor="rr-company">Company Name <span className="review-required" aria-hidden="true">*</span></label>
           <input
             id="rr-company"
             type="text"
             className="filter-input"
             placeholder="e.g. Functional Software Inc."
             required
+            aria-required="true"
             maxLength={200}
             value={form.companyName}
             onChange={(e) => updateField('companyName', e.target.value)}
@@ -137,13 +139,14 @@ export function ReviewRequest() {
         </div>
 
         <div className="review-field">
-          <label htmlFor="rr-email">Contact Email</label>
+          <label htmlFor="rr-email">Contact Email <span className="review-required" aria-hidden="true">*</span></label>
           <input
             id="rr-email"
             type="email"
             className="filter-input"
             placeholder="e.g. privacy@yourcompany.com"
             required
+            aria-required="true"
             value={form.contactEmail}
             onChange={(e) => updateField('contactEmail', e.target.value)}
           />
@@ -151,11 +154,12 @@ export function ReviewRequest() {
         </div>
 
         <div className="review-field">
-          <label htmlFor="rr-type">Service Type</label>
+          <label htmlFor="rr-type">Service Type <span className="review-required" aria-hidden="true">*</span></label>
           <select
             id="rr-type"
             className="filter-select"
             required
+            aria-required="true"
             value={form.serviceType}
             onChange={(e) => updateField('serviceType', e.target.value)}
           >
@@ -168,24 +172,29 @@ export function ReviewRequest() {
         </div>
 
         <div className="review-field">
-          <label htmlFor="rr-desc">Description</label>
+          <label htmlFor="rr-desc">Description <span className="review-required" aria-hidden="true">*</span></label>
           <textarea
             id="rr-desc"
             className="filter-input review-textarea"
             placeholder="Describe what your service does, what data it collects, and why it should not be classified as a surveillance tracker. Include links to your privacy policy if available."
             required
+            aria-required="true"
             maxLength={2000}
             rows={5}
             value={form.description}
             onChange={(e) => updateField('description', e.target.value)}
           />
-          <span className="review-hint">{form.description.length}/2000 characters</span>
+          <span className="review-hint" aria-live="polite">{form.description.length}/2000 characters</span>
         </div>
 
+        {!form.serviceType && (
+          <div className="review-hint" style={{ marginBottom: '8px' }}>Please select a service type to submit.</div>
+        )}
         <button
           type="submit"
           className="review-submit-btn"
           disabled={state === 'submitting' || !form.serviceType}
+          aria-disabled={state === 'submitting' || !form.serviceType}
         >
           {state === 'submitting' ? 'Submitting...' : 'Submit Review Request'}
         </button>

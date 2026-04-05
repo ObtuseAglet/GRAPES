@@ -33,6 +33,7 @@ export function Leaderboard({ onDomainClick }: LeaderboardProps) {
     : entries;
 
   if (error) return <div className="error-msg">Failed to load: {error}</div>;
+  if (entries.length === 0 && !search) return <div className="loading">Loading leaderboard...</div>;
 
   return (
     <div className="page">
@@ -82,7 +83,10 @@ export function Leaderboard({ onDomainClick }: LeaderboardProps) {
               <tr
                 key={entry.domain}
                 className="clickable"
+                role="button"
+                tabIndex={0}
                 onClick={() => onDomainClick(entry.domain)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDomainClick(entry.domain); } }}
               >
                 <td>{i + 1}</td>
                 <td>

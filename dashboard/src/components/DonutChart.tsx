@@ -7,7 +7,9 @@ interface DonutChartProps {
 
 export function DonutChart({ data, size = 180 }: DonutChartProps) {
   const total = data.reduce((sum, d) => sum + d.value, 0);
-  if (total === 0) return null;
+  if (total === 0) {
+    return <p className="empty">No data available yet.</p>;
+  }
 
   const cx = size / 2;
   const cy = size / 2;
@@ -43,21 +45,30 @@ export function DonutChart({ data, size = 180 }: DonutChartProps) {
     );
   });
 
+  const description = data.map((d) => `${d.label}: ${d.value.toLocaleString()}`).join(', ');
+
   return (
     <div className="donut-chart">
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        role="img"
+        aria-label={`Donut chart showing ${total.toLocaleString()} total reports. ${description}`}
+      >
+        <title>Threat distribution: {total.toLocaleString()} reports</title>
         {arcs}
-        <text x={cx} y={cy - 6} textAnchor="middle" className="donut-total">
+        <text x={cx} y={cy - 6} textAnchor="middle" className="donut-total" aria-hidden="true">
           {total.toLocaleString()}
         </text>
-        <text x={cx} y={cy + 14} textAnchor="middle" className="donut-label">
+        <text x={cx} y={cy + 14} textAnchor="middle" className="donut-label" aria-hidden="true">
           reports
         </text>
       </svg>
-      <div className="donut-legend">
+      <div className="donut-legend" role="list" aria-label="Chart legend">
         {data.map((d, i) => (
-          <div key={d.label} className="legend-item">
-            <span className="legend-dot" style={{ background: d.color || COLORS[i % COLORS.length] }} />
+          <div key={d.label} className="legend-item" role="listitem">
+            <span className="legend-dot" style={{ background: d.color || COLORS[i % COLORS.length] }} aria-hidden="true" />
             <span className="legend-text">{d.label}</span>
             <span className="legend-value">{d.value.toLocaleString()}</span>
           </div>

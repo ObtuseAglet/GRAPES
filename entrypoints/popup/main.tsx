@@ -467,13 +467,14 @@ function SettingsTab({
     type: 'success' | 'error';
     text: string;
   } | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   async function handleExportLogs() {
     try {
       const logs = await browser.runtime.sendMessage({ type: 'GET_ALL_LOGS' });
       if (!logs || logs.length === 0) {
-        alert('No logs to export. Enable logging and browse some sites first.');
+        setSettingsStatus({ type: 'error', text: 'No logs to export. Enable logging and browse some sites first.' });
         return;
       }
       const json = JSON.stringify(logs, null, 2);
@@ -484,17 +485,21 @@ function SettingsTab({
       a.download = `grapes-logs-${new Date().toISOString().split('T')[0]}.json`;
       a.click();
       URL.revokeObjectURL(url);
+      setSettingsStatus({ type: 'success', text: 'Logs exported.' });
     } catch (e) {
       console.error('Export failed:', e);
-      alert('Failed to export logs');
+      setSettingsStatus({ type: 'error', text: 'Failed to export logs.' });
     }
   }
 
   async function handleClearLogs() {
-    if (confirm('Are you sure you want to clear all surveillance logs? This cannot be undone.')) {
-      await browser.runtime.sendMessage({ type: 'CLEAR_LOGS' });
-      alert('Logs cleared successfully');
+    if (!confirmClear) {
+      setConfirmClear(true);
+      return;
     }
+    await browser.runtime.sendMessage({ type: 'CLEAR_LOGS' });
+    setSettingsStatus({ type: 'success', text: 'Logs cleared.' });
+    setConfirmClear(false);
   }
 
   async function handleStealthTest() {
@@ -622,7 +627,7 @@ function SettingsTab({
             📥 Export Logs
           </button>
           <button type="button" className="secondary-btn danger" onClick={handleClearLogs}>
-            🗑️ Clear Logs
+            {confirmClear ? '⚠️ Confirm Clear' : '🗑️ Clear Logs'}
           </button>
         </div>
         <div className="setting-hint">Export logs as JSON for MongoDB import or analysis</div>
@@ -783,27 +788,27 @@ function StylesTab({
     }
   }
 
+  const [inspectorStatus, setInspectorStatus] = useState('');
+
   async function handleInspectElement() {
+    setInspectorStatus('');
     try {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
 
       if (!tab || !tab.id) {
-        window.alert('Unable to find the active tab to inspect.');
+        setInspectorStatus('Unable to find the active tab.');
         return;
       }
 
-      // Avoid sending messages to pages where content scripts cannot run.
       if (tab.url && !/^https?:/i.test(tab.url)) {
-        window.alert('The inspector cannot be used on this type of page.');
+        setInspectorStatus('Inspector cannot run on this page type.');
         return;
       }
 
       await browser.tabs.sendMessage(tab.id, { type: 'ACTIVATE_INSPECTOR' });
     } catch (error) {
-      // Handle cases where sendMessage rejects (e.g. no content script in the tab).
-      // eslint-disable-next-line no-console
       console.error('Failed to activate inspector', error);
-      window.alert('Unable to activate the inspector on this page.');
+      setInspectorStatus('Unable to activate inspector on this page.');
     }
   }
 
@@ -1013,6 +1018,9 @@ function StylesTab({
           🔍 Inspect Element
         </button>
       </div>
+      {inspectorStatus && (
+        <div className="setting-feedback error">{inspectorStatus}</div>
+      )}
 
       <div className="btn-row">
         <button type="button" className="secondary-btn" onClick={handleReset}>
@@ -1448,7 +1456,14 @@ function PopupApp() {
   }
 
   if (!preferences) {
-    return <div className="popup-container loading">Loading...</div>;
+    return (
+      <div className="popup-container loading">
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '28px', marginBottom: '8px' }}>🍇</div>
+          <div style={{ color: '#888', fontSize: '13px' }}>Loading...</div>
+        </div>
+      </div>
+    );
   }
 
   const override = preferences.siteSettings[currentDomain] || null;

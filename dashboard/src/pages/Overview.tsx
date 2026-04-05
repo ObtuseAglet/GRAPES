@@ -72,7 +72,7 @@ export function Overview({ onDomainClick }: OverviewProps) {
               </thead>
               <tbody>
                 {stats.recentDomains.map((d) => (
-                  <tr key={d.domain} className="clickable" onClick={() => onDomainClick(d.domain)}>
+                  <tr key={d.domain} className="clickable" role="button" tabIndex={0} onClick={() => onDomainClick(d.domain)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDomainClick(d.domain); } }}>
                     <td className="domain-cell">{d.domain}</td>
                     <td>{d.count.toLocaleString()}</td>
                   </tr>
