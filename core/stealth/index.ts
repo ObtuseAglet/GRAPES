@@ -3,8 +3,10 @@ export { isSuspiciousObservation } from './observation';
 export {
   isTrackingUrl,
   TRACKING_DOMAINS,
+  FUNCTIONAL_DOMAINS,
   TRACKING_PATTERNS,
   type TrackingResult,
+  type TrackingOptions,
 } from './tracking';
 export {
   detectSessionReplayTools,

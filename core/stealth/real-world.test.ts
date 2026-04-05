@@ -283,7 +283,7 @@ describe('real-world: third-party ad/analytics ecosystem', () => {
     ['https://analytics.tiktok.com/i18n/pixel/events.js?sdkid=abc', 'TikTok pixel'],
     ['https://snap.licdn.com/li.lms-analytics/insight.min.js', 'LinkedIn Insight'],
     ['https://www.redditstatic.com/ads/pixel.js', 'Reddit pixel URL pattern'],
-    ['https://o123.ingest.sentry.io/api/456/envelope/', 'Sentry error tracking'],
+    ['https://cdn.taboola.com/libtrc/impl.js', 'Taboola ad network'],
   ] as const;
 
   for (const [url, label] of patterns) {
@@ -307,5 +307,40 @@ describe('real-world: third-party ad/analytics ecosystem', () => {
         expect(isTrackingUrl(url, GOOGLE_BASE).isTracking).toBe(false);
       });
     }
+  });
+
+  describe('should NOT block error monitoring / functional services by default', () => {
+    const functional = [
+      ['https://o123.ingest.sentry.io/api/456/envelope/', 'Sentry error ingest'],
+      ['https://js.sentry-cdn.com/abc123.min.js', 'Sentry CDN SDK'],
+      ['https://notify.bugsnag.com/', 'Bugsnag error notification'],
+      ['https://api.rollbar.com/api/1/item/', 'Rollbar error report'],
+      ['https://bam.nr-data.net/1/asdf?a=123', 'New Relic browser agent'],
+      ['https://logs-01.loggly.com/inputs/abc/tag/http/', 'Loggly log ingest'],
+      ['https://api-iam.intercom.io/messenger/web/ping', 'Intercom support widget'],
+      ['https://mycompany.zendesk.com/api/v2/tickets', 'Zendesk support API'],
+    ] as const;
+
+    for (const [url, label] of functional) {
+      it(`allows ${label}`, () => {
+        const result = isTrackingUrl(url, GOOGLE_BASE);
+        expect(result.isTracking).toBe(false);
+      });
+    }
+
+    it('labels functional services with type "functional" for UI display', () => {
+      const result = isTrackingUrl('https://o123.ingest.sentry.io/api/456/envelope/', GOOGLE_BASE);
+      expect(result.type).toBe('functional');
+    });
+
+    it('blocks functional services when user opts in', () => {
+      const result = isTrackingUrl(
+        'https://o123.ingest.sentry.io/api/456/envelope/',
+        GOOGLE_BASE,
+        { blockFunctional: true },
+      );
+      expect(result.isTracking).toBe(true);
+      expect(result.type).toBe('functional');
+    });
   });
 });

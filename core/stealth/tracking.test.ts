@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isTrackingUrl, TRACKING_DOMAINS, TRACKING_PATTERNS } from './tracking';
+import { isTrackingUrl, TRACKING_DOMAINS, TRACKING_PATTERNS, FUNCTIONAL_DOMAINS } from './tracking';
 
 const BASE = 'https://example.com';
 
@@ -55,12 +55,6 @@ describe('isTrackingUrl', () => {
 
     it('detects criteo.com', () => {
       const result = isTrackingUrl('https://dis.criteo.com/dis/rtb/appnexus/cookieMatch.aspx', BASE);
-      expect(result.isTracking).toBe(true);
-      expect(result.type).toBe('analytics');
-    });
-
-    it('detects sentry.io', () => {
-      const result = isTrackingUrl('https://o123.ingest.sentry.io/api/123/envelope/', BASE);
       expect(result.isTracking).toBe(true);
       expect(result.type).toBe('analytics');
     });
@@ -128,6 +122,92 @@ describe('isTrackingUrl', () => {
     });
   });
 
+  describe('functional services (error monitors, support) — NOT blocked by default', () => {
+    it('does NOT block sentry.io by default', () => {
+      const result = isTrackingUrl('https://o123.ingest.sentry.io/api/123/envelope/', BASE);
+      expect(result.isTracking).toBe(false);
+      expect(result.type).toBe('functional');
+    });
+
+    it('does NOT block bugsnag.com by default', () => {
+      const result = isTrackingUrl('https://notify.bugsnag.com/', BASE);
+      expect(result.isTracking).toBe(false);
+      expect(result.type).toBe('functional');
+    });
+
+    it('does NOT block rollbar.com by default', () => {
+      const result = isTrackingUrl('https://api.rollbar.com/api/1/item/', BASE);
+      expect(result.isTracking).toBe(false);
+      expect(result.type).toBe('functional');
+    });
+
+    it('does NOT block newrelic.com by default', () => {
+      const result = isTrackingUrl('https://bam.nr-data.net/1/asdf?a=123', BASE);
+      expect(result.isTracking).toBe(false);
+      expect(result.type).toBe('functional');
+    });
+
+    it('does NOT block loggly.com by default', () => {
+      const result = isTrackingUrl('https://logs-01.loggly.com/inputs/abc/tag/http/', BASE);
+      expect(result.isTracking).toBe(false);
+      expect(result.type).toBe('functional');
+    });
+
+    it('does NOT block intercom.io by default', () => {
+      const result = isTrackingUrl('https://api-iam.intercom.io/messenger/web/ping', BASE);
+      expect(result.isTracking).toBe(false);
+      expect(result.type).toBe('functional');
+    });
+
+    it('does NOT block zendesk.com by default', () => {
+      const result = isTrackingUrl('https://static.zdassets.com/ekr/snippet.js', BASE);
+      // zendesk.com isn't in the hostname here, but let's test the actual domain
+      const result2 = isTrackingUrl('https://mycompany.zendesk.com/api/v2/tickets', BASE);
+      expect(result2.isTracking).toBe(false);
+      expect(result2.type).toBe('functional');
+    });
+
+    it('BLOCKS sentry.io when blockFunctional is true', () => {
+      const result = isTrackingUrl(
+        'https://o123.ingest.sentry.io/api/123/envelope/',
+        BASE,
+        { blockFunctional: true },
+      );
+      expect(result.isTracking).toBe(true);
+      expect(result.type).toBe('functional');
+    });
+
+    it('BLOCKS bugsnag.com when blockFunctional is true', () => {
+      const result = isTrackingUrl(
+        'https://notify.bugsnag.com/',
+        BASE,
+        { blockFunctional: true },
+      );
+      expect(result.isTracking).toBe(true);
+      expect(result.type).toBe('functional');
+    });
+
+    it('BLOCKS newrelic when blockFunctional is true', () => {
+      const result = isTrackingUrl(
+        'https://bam.nr-data.net/1/asdf',
+        BASE,
+        { blockFunctional: true },
+      );
+      expect(result.isTracking).toBe(true);
+      expect(result.type).toBe('functional');
+    });
+
+    it('BLOCKS intercom.io when blockFunctional is true', () => {
+      const result = isTrackingUrl(
+        'https://api-iam.intercom.io/messenger/web/ping',
+        BASE,
+        { blockFunctional: true },
+      );
+      expect(result.isTracking).toBe(true);
+      expect(result.type).toBe('functional');
+    });
+  });
+
   describe('non-tracking URLs', () => {
     it('returns false for regular website', () => {
       const result = isTrackingUrl('https://example.com/about', BASE);
@@ -163,7 +243,6 @@ describe('isTrackingUrl', () => {
     });
 
     it('handles relative URLs against tracking base', () => {
-      // Relative URL resolved against a non-tracking base should be fine
       const result = isTrackingUrl('/page', BASE);
       expect(result.isTracking).toBe(false);
     });
@@ -175,12 +254,22 @@ describe('isTrackingUrl', () => {
   });
 
   describe('domain list coverage', () => {
-    it('has at least 40 tracking domains', () => {
-      expect(TRACKING_DOMAINS.length).toBeGreaterThanOrEqual(40);
+    it('has at least 35 surveillance tracking domains', () => {
+      expect(TRACKING_DOMAINS.length).toBeGreaterThanOrEqual(35);
+    });
+
+    it('has at least 7 functional service domains', () => {
+      expect(FUNCTIONAL_DOMAINS.length).toBeGreaterThanOrEqual(7);
     });
 
     it('has at least 10 tracking patterns', () => {
       expect(TRACKING_PATTERNS.length).toBeGreaterThanOrEqual(10);
+    });
+
+    it('tracking and functional domains do not overlap', () => {
+      for (const domain of FUNCTIONAL_DOMAINS) {
+        expect(TRACKING_DOMAINS).not.toContain(domain);
+      }
     });
   });
 });
