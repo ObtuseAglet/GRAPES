@@ -1,10 +1,12 @@
 import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { browser } from 'wxt/browser';
+import type { EditorRule } from '../../features/editor/rules';
 import { ButtonGroup } from '../../lib/components/ButtonGroup';
 import { EmptyState } from '../../lib/components/EmptyState';
+import { SiteReportCard } from '../../lib/components/SiteReportCard';
 import { StatusBadge } from '../../lib/components/StatusBadge';
-import type { EditorRule } from '../../features/editor/rules';
+import { ThreatExplainer } from '../../lib/components/ThreatExplainer';
 import { ACCESSIBILITY_PRESETS, BUILT_IN_THEMES } from '../../lib/themes';
 import type {
   CustomStyles,
@@ -176,7 +178,8 @@ function isGrapesPreferences(value: unknown): value is ImportableGrapesPreferenc
   const validMode =
     prefs.globalMode === 'full' ||
     prefs.globalMode === 'detection-only' ||
-    prefs.globalMode === 'disabled';
+    prefs.globalMode === 'disabled' ||
+    prefs.globalMode === 'spoof';
   const validSiteSettings =
     !!prefs.siteSettings &&
     Object.values(prefs.siteSettings).every(
@@ -240,10 +243,23 @@ function Header({ preferences, currentDomain }: HeaderProps) {
       ? true
       : override === 'disabled'
         ? false
-        : preferences?.globalMode === 'full';
+        : preferences?.globalMode === 'full' || preferences?.globalMode === 'spoof';
   const mode = preferences?.globalMode || 'detection-only';
-  const statusColor = active ? '#27ae60' : mode === 'detection-only' ? '#f39c12' : '#e74c3c';
-  const statusText = active ? 'Protected' : mode === 'detection-only' ? 'Monitoring' : 'Disabled';
+  const isSpoofing = mode === 'spoof';
+  const statusColor = active
+    ? isSpoofing
+      ? '#9b59b6'
+      : '#27ae60'
+    : mode === 'detection-only'
+      ? '#f39c12'
+      : '#e74c3c';
+  const statusText = active
+    ? isSpoofing
+      ? 'Spoofing'
+      : 'Protected'
+    : mode === 'detection-only'
+      ? 'Monitoring'
+      : 'Disabled';
 
   return (
     <>
@@ -295,9 +311,15 @@ interface ActivityTabProps {
   logEntry: SurveillanceLogEntry | null;
   surveillance: SurveillanceData | null;
   protectionActive: boolean;
+  currentDomain: string;
 }
 
-function ActivityTab({ logEntry, surveillance, protectionActive }: ActivityTabProps) {
+function ActivityTab({
+  logEntry,
+  surveillance,
+  protectionActive,
+  currentDomain,
+}: ActivityTabProps) {
   function getEvents(): SurveillanceEvent[] {
     if (logEntry?.events?.length) return logEntry.events;
     if (!surveillance) return [];
@@ -349,6 +371,7 @@ function ActivityTab({ logEntry, surveillance, protectionActive }: ActivityTabPr
   if (events.length === 0) {
     return (
       <div className="tab-content">
+        <SiteReportCard domain={currentDomain} events={[]} protectionActive={protectionActive} />
         <EmptyState
           icon="✅"
           title="No Surveillance Detected"
@@ -360,6 +383,7 @@ function ActivityTab({ logEntry, surveillance, protectionActive }: ActivityTabPr
 
   return (
     <div className="tab-content">
+      <SiteReportCard domain={currentDomain} events={events} protectionActive={protectionActive} />
       <div className="activity-summary">
         <span className="summary-count">{events.length}</span>
         <span className="summary-text">tracking method{events.length !== 1 ? 's' : ''} found</span>
@@ -369,28 +393,27 @@ function ActivityTab({ logEntry, surveillance, protectionActive }: ActivityTabPr
           const info = THREATS[e.type] || { icon: '❓', label: e.type, color: '#888', desc: '' };
           const details = e.details.map((d) => d.charAt(0).toUpperCase() + d.slice(1)).join(', ');
           return (
-            <div
-              key={`${e.type}-${e.timestamp}`}
-              className="event-card"
-              style={{ borderLeftColor: info.color }}
-            >
-              <div
-                className="event-icon"
-                style={{ background: `${info.color}20`, color: info.color }}
-              >
-                {info.icon}
-              </div>
-              <div className="event-body">
-                <div className="event-header">
-                  <span className="event-label">{info.label}</span>
-                  <span className="event-time">{formatTime(e.timestamp)}</span>
+            <div key={`${e.type}-${e.timestamp}`}>
+              <div className="event-card" style={{ borderLeftColor: info.color }}>
+                <div
+                  className="event-icon"
+                  style={{ background: `${info.color}20`, color: info.color }}
+                >
+                  {info.icon}
                 </div>
-                <div className="event-details">{details}</div>
-                <div className="event-desc">{info.desc}</div>
+                <div className="event-body">
+                  <div className="event-header">
+                    <span className="event-label">{info.label}</span>
+                    <span className="event-time">{formatTime(e.timestamp)}</span>
+                  </div>
+                  <div className="event-details">{details}</div>
+                  <div className="event-desc">{info.desc}</div>
+                </div>
+                <div className={`event-status ${e.blocked ? 'blocked' : 'detected'}`}>
+                  {e.blocked ? 'Blocked' : 'Detected'}
+                </div>
               </div>
-              <div className={`event-status ${e.blocked ? 'blocked' : 'detected'}`}>
-                {e.blocked ? '🛡️ Blocked' : '⚠️ Detected'}
-              </div>
+              <ThreatExplainer category={e.type} blocked={e.blocked} />
             </div>
           );
         })}
@@ -403,14 +426,15 @@ function ActivityTab({ logEntry, surveillance, protectionActive }: ActivityTabPr
 interface SettingsTabProps {
   preferences: GrapesPreferences;
   currentDomain: string;
-  onModeChange: (mode: 'full' | 'detection-only' | 'disabled') => void;
+  onModeChange: (mode: 'full' | 'detection-only' | 'disabled' | 'spoof') => void;
   onSiteChange: (setting: 'enabled' | 'disabled' | 'default') => void;
   onLoggingChange: (enabled: boolean) => void;
   onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<boolean>;
 }
 
-const MODE_OPTIONS: { value: 'full' | 'detection-only' | 'disabled'; label: string }[] = [
+const MODE_OPTIONS: { value: 'full' | 'detection-only' | 'disabled' | 'spoof'; label: string }[] = [
   { value: 'full', label: '🛡️ Full' },
+  { value: 'spoof', label: '🎭 Spoof' },
   { value: 'detection-only', label: '👁️ Detect' },
   { value: 'disabled', label: '⏸️ Off' },
 ];
@@ -1040,6 +1064,10 @@ interface DataTabProps {
   lastSyncAt: number | null;
   onConsentChange: (enabled: boolean) => Promise<void>;
   onFlushQueue: () => Promise<void>;
+  contributionConsent: boolean;
+  contributionEndpoint: string;
+  onContributionChange: (enabled: boolean) => Promise<void>;
+  onEndpointChange: (endpoint: string) => Promise<void>;
 }
 
 function DataTab({
@@ -1050,10 +1078,65 @@ function DataTab({
   lastSyncAt,
   onConsentChange,
   onFlushQueue,
+  contributionConsent,
+  contributionEndpoint,
+  onContributionChange,
+  onEndpointChange,
 }: DataTabProps) {
+  const [endpointDraft, setEndpointDraft] = useState(contributionEndpoint);
+  const [endpointSaved, setEndpointSaved] = useState(false);
+
   return (
     <div className="tab-content">
       <div className="setting-section">
+        <div className="setting-label">Data Contribution</div>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={contributionConsent}
+            onChange={(e) => onContributionChange(e.target.checked)}
+          />
+          <span>Help map web surveillance</span>
+        </label>
+        <div className="setting-hint">
+          When enabled, GRAPES sends anonymized reports (domain + threat type only, no personal
+          data) to build a public dashboard of the worst surveillance offenders on the web. You can
+          opt out at any time.
+        </div>
+        <div className="setting-label" style={{ marginTop: '12px' }}>
+          Server URL
+        </div>
+        <div className="btn-row">
+          <input
+            type="text"
+            className="style-input"
+            value={endpointDraft}
+            onChange={(e) => {
+              setEndpointDraft(e.target.value);
+              setEndpointSaved(false);
+            }}
+            placeholder="https://your-app.up.railway.app/api/v1/reports"
+            style={{ marginTop: 0 }}
+          />
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={async () => {
+              await onEndpointChange(endpointDraft.trim());
+              setEndpointSaved(true);
+            }}
+          >
+            Save
+          </button>
+        </div>
+        {endpointSaved && <div className="setting-feedback success">Endpoint saved.</div>}
+        <div className="setting-hint">
+          Your GRAPES dashboard server URL. Deploy with Railway then paste the URL here.
+        </div>
+      </div>
+
+      <div className="setting-section">
+        <div className="setting-label">Sync Queue</div>
         <label className="toggle-row">
           <input
             type="checkbox"
@@ -1085,6 +1168,8 @@ function PopupApp() {
   const [sharingConsent, setSharingConsent] = useState(false);
   const [queueLength, setQueueLength] = useState(0);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  const [contributionConsent, setContributionConsent] = useState(false);
+  const [contributionEndpoint, setContributionEndpoint] = useState('');
   const [showResetNotice, setShowResetNotice] = useState(false);
 
   useEffect(() => {
@@ -1121,6 +1206,18 @@ function PopupApp() {
             setSharingConsent(sharingStatus.data.consent);
             setQueueLength(sharingStatus.data.queueLength);
             setLastSyncAt(sharingStatus.data.lastSyncAt);
+          }
+
+          const contribStatus = await browser.runtime.sendMessage({
+            type: 'CORE_GET_CONTRIBUTION_STATUS',
+            requestId: `popup-contrib-${Date.now()}`,
+            source: 'popup',
+            timestamp: Date.now(),
+            schemaVersion: 2,
+          });
+          if (contribStatus?.ok) {
+            setContributionConsent(contribStatus.data.consentGiven);
+            setContributionEndpoint(contribStatus.data.endpoint || '');
           }
         } catch {
           // Ignore if core router is unavailable during compatibility window.
@@ -1199,7 +1296,7 @@ function PopupApp() {
     init();
   }, []);
 
-  async function handleModeChange(mode: 'full' | 'detection-only' | 'disabled') {
+  async function handleModeChange(mode: 'full' | 'detection-only' | 'disabled' | 'spoof') {
     await browser.runtime.sendMessage({ type: 'SET_GLOBAL_MODE', mode });
     setPreferences((prev) => prev && { ...prev, globalMode: mode });
   }
@@ -1259,6 +1356,34 @@ function PopupApp() {
     });
     if (response?.ok) {
       setSharingConsent(enabled);
+    }
+  }
+
+  async function handleContributionChange(enabled: boolean): Promise<void> {
+    const response = await browser.runtime.sendMessage({
+      type: 'CORE_SET_CONTRIBUTION_CONSENT',
+      enabled,
+      requestId: `popup-contrib-consent-${Date.now()}`,
+      source: 'popup',
+      timestamp: Date.now(),
+      schemaVersion: 2,
+    });
+    if (response?.ok) {
+      setContributionConsent(enabled);
+    }
+  }
+
+  async function handleEndpointChange(endpoint: string): Promise<void> {
+    const response = await browser.runtime.sendMessage({
+      type: 'CORE_SET_CONTRIBUTION_ENDPOINT',
+      endpoint,
+      requestId: `popup-endpoint-${Date.now()}`,
+      source: 'popup',
+      timestamp: Date.now(),
+      schemaVersion: 2,
+    });
+    if (response?.ok) {
+      setContributionEndpoint(endpoint);
     }
   }
 
@@ -1322,7 +1447,7 @@ function PopupApp() {
       ? true
       : override === 'disabled'
         ? false
-        : preferences.globalMode === 'full';
+        : preferences.globalMode === 'full' || preferences.globalMode === 'spoof';
 
   return (
     <div className="popup-container">
@@ -1338,6 +1463,7 @@ function PopupApp() {
           logEntry={logEntry}
           surveillance={surveillance}
           protectionActive={protectionActive}
+          currentDomain={currentDomain}
         />
       )}
       {currentTab === 'protect' && (
@@ -1359,6 +1485,10 @@ function PopupApp() {
           lastSyncAt={lastSyncAt}
           onConsentChange={handleSharingConsent}
           onFlushQueue={handleFlushQueue}
+          contributionConsent={contributionConsent}
+          contributionEndpoint={contributionEndpoint}
+          onContributionChange={handleContributionChange}
+          onEndpointChange={handleEndpointChange}
         />
       )}
       {currentTab === 'edit' && (

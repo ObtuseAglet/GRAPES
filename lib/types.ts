@@ -10,8 +10,8 @@ export interface CustomStyles {
 
 /** Global preferences stored in sync storage */
 export interface GrapesPreferences {
-  /** Global protection mode: 'full' | 'detection-only' | 'disabled' */
-  globalMode: 'full' | 'detection-only' | 'disabled';
+  /** Global protection mode */
+  globalMode: 'full' | 'detection-only' | 'disabled' | 'spoof';
   /** Per-site protection overrides: domain -> 'enabled' | 'disabled' | 'default' */
   siteSettings: Record<string, 'enabled' | 'disabled' | 'default'>;
   /** Custom styles feature (disabled by default) */
@@ -35,7 +35,7 @@ export interface SurveillanceLogEntry {
   url: string;
   timestamp: number;
   events: SurveillanceEvent[];
-  protectionMode: 'full' | 'detection-only' | 'disabled';
+  protectionMode: 'full' | 'detection-only' | 'disabled' | 'spoof';
   blocked: boolean;
 }
 

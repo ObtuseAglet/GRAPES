@@ -1,5 +1,5 @@
-import type { StorageStateV2 } from '../storage/schema';
 import type { ProtectionMode } from '../contracts/types';
+import type { StorageStateV2 } from '../storage/schema';
 import { extractBaseDomain } from './domain';
 
 export interface PolicyStatus {
@@ -22,7 +22,7 @@ export function getProtectionStatusForDomain(domain: string, state: StorageState
   const mode = state.coreSettings.mode;
   return {
     mode,
-    protectionEnabled: mode === 'full',
+    protectionEnabled: mode === 'full' || mode === 'spoof',
     siteOverride,
   };
 }

@@ -1,8 +1,8 @@
+import { applyEditorRules } from '../features/editor/rules';
 import { activateSelectorInspector } from '../lib/inspector';
 import { injectStealthTest } from '../lib/stealth-tester';
 import { BUILT_IN_THEMES } from '../lib/themes';
 import type { CustomStyles, GrapesPreferences } from '../lib/types';
-import { applyEditorRules } from '../features/editor/rules';
 
 // ============================================================================
 // NOTIFICATION MANAGER - Handles stacking toast notifications
@@ -435,7 +435,7 @@ class NotificationManager {
 }
 
 // Current protection mode for this page
-let currentProtectionMode: 'full' | 'detection-only' | 'disabled' = 'detection-only';
+let currentProtectionMode: 'full' | 'detection-only' | 'disabled' | 'spoof' = 'detection-only';
 let detectionThreatCount = 0;
 const detectedTypes: Set<string> = new Set(); // Track detected types to prevent duplicate counting
 let notificationDebounceTimer: number | null = null;
@@ -464,10 +464,10 @@ export default defineContentScript({
     const currentDomain = extractDomainFromHostname(window.location.hostname);
 
     // Helper to notify the MAIN world stealth script about protection mode
-    const notifyProtectionMode = (enabled: boolean) => {
+    const notifyProtectionMode = (enabled: boolean, spoof: boolean = false) => {
       window.dispatchEvent(
         new CustomEvent('grapes-set-protection-mode', {
-          detail: JSON.stringify({ enabled }),
+          detail: JSON.stringify({ enabled, spoof }),
         }),
       );
     };
@@ -483,8 +483,8 @@ export default defineContentScript({
           console.log(`[GRAPES] Protection mode for ${currentDomain}: ${currentProtectionMode}`);
 
           // Notify the MAIN world stealth script whether protection should be enabled
-          const protectionEnabled = status.mode === 'full';
-          notifyProtectionMode(protectionEnabled);
+          const protectionEnabled = status.mode === 'full' || status.mode === 'spoof';
+          notifyProtectionMode(protectionEnabled, status.mode === 'spoof');
         }
       })
       .catch((err) => {
@@ -511,8 +511,8 @@ export default defineContentScript({
 
     // Handler for showing notifications based on mode
     const handleDetection = (type: string, showDetailedFn: () => void) => {
-      if (currentProtectionMode === 'full') {
-        // Full protection: show detailed notification
+      if (currentProtectionMode === 'full' || currentProtectionMode === 'spoof') {
+        // Full/spoof protection: show detailed notification
         showDetailedFn();
       } else if (currentProtectionMode === 'detection-only') {
         // Detection-only: increment counter only if this type hasn't been seen

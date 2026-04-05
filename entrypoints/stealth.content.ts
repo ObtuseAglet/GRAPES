@@ -23,13 +23,24 @@ export default defineContentScript({
     // before content.ts can check storage and potentially disable it
     let protectionEnabled = true;
 
+    // Whether spoof mode is active (inject junk data into tracking APIs)
+    let spoofModeActive = false;
+    let spoofInstalled = false;
+
     // Listen for protection mode changes from content.ts (ISOLATED world)
     window.addEventListener('grapes-set-protection-mode', (event: Event) => {
       const customEvent = event as CustomEvent;
       try {
-        const { enabled } = JSON.parse(customEvent.detail);
+        const { enabled, spoof } = JSON.parse(customEvent.detail);
         protectionEnabled = enabled;
-        console.log(`[GRAPES Stealth] Protection mode set to: ${enabled ? 'enabled' : 'disabled'}`);
+        spoofModeActive = !!spoof;
+        console.log(
+          `[GRAPES Stealth] Protection mode set to: ${enabled ? 'enabled' : 'disabled'}${spoofModeActive ? ' (spoof)' : ''}`,
+        );
+        if (spoofModeActive && !spoofInstalled) {
+          installSpoofOverrides();
+          spoofInstalled = true;
+        }
       } catch (e) {
         console.error('[GRAPES Stealth] Error parsing protection mode event:', e);
       }
@@ -111,7 +122,7 @@ export default defineContentScript({
       for (const [tool, signatures] of Object.entries(SESSION_REPLAY_SIGNATURES)) {
         // Check for global variables
         for (const global of signatures.globals) {
-          if ((window as any)[global] !== undefined) {
+          if ((window as unknown as Record<string, unknown>)[global] !== undefined) {
             detected.push(tool);
             break;
           }
@@ -317,8 +328,6 @@ export default defineContentScript({
     class StealthMutationObserver {
       private realObserver: MutationObserver;
       private userCallback: MutationCallback;
-      private isObserving: boolean = false;
-
       constructor(callback: MutationCallback) {
         this.userCallback = callback;
 
@@ -340,12 +349,10 @@ export default defineContentScript({
           notifySuspiciousObservation(target, options);
         }
 
-        this.isObserving = true;
         originalObserve.call(this.realObserver, target, options);
       }
 
       disconnect(): void {
-        this.isObserving = false;
         originalDisconnect.call(this.realObserver);
       }
 
@@ -411,7 +418,9 @@ export default defineContentScript({
         length: nodes.length,
         item: (index: number) => nodes[index] || null,
         forEach: (callback: (value: T, key: number, parent: NodeListOf<T>) => void) => {
-          nodes.forEach((node, i) => callback(node, i, fakeList as NodeListOf<T>));
+          for (const [i, node] of nodes.entries()) {
+            callback(node, i, fakeList as NodeListOf<T>);
+          }
         },
         entries: () => nodes.entries(),
         keys: () => nodes.keys(),
@@ -420,9 +429,9 @@ export default defineContentScript({
       };
 
       // Add numeric indices
-      nodes.forEach((node, i) => {
-        (fakeList as any)[i] = node;
-      });
+      for (const [i, node] of nodes.entries()) {
+        (fakeList as Record<number, T>)[i] = node;
+      }
 
       return fakeList as NodeListOf<T>;
     }
@@ -584,7 +593,9 @@ export default defineContentScript({
               clone,
               '[id^="grapes"], [data-grapes-injected]',
             );
-            grapesElements.forEach((el) => el.remove());
+            for (const el of grapesElements) {
+              el.remove();
+            }
 
             // Also check for script/style tags we injected by walking all elements
             const allElements = originalElementQuerySelectorAll.call(clone, '*');
@@ -608,27 +619,26 @@ export default defineContentScript({
     // Intercept getElementsByTagName - filter GRAPES elements
     Document.prototype.getElementsByTagName = function (tagName: string) {
       const results = originalGetElementsByTagName.call(this, tagName);
-      return createFakeNodeList(filterNodeList(results)) as any;
+      return createFakeNodeList(filterNodeList(results)) as unknown as HTMLCollectionOf<Element>;
     };
 
     Element.prototype.getElementsByTagName = function (tagName: string) {
       const results = originalElementGetElementsByTagName.call(this, tagName);
-      return createFakeNodeList(filterNodeList(results)) as any;
+      return createFakeNodeList(filterNodeList(results)) as unknown as HTMLCollectionOf<Element>;
     };
 
     // Intercept getElementsByClassName - filter GRAPES elements
     Document.prototype.getElementsByClassName = function (classNames: string) {
       const results = originalGetElementsByClassName.call(this, classNames);
-      return createFakeNodeList(filterNodeList(results)) as any;
+      return createFakeNodeList(filterNodeList(results)) as unknown as HTMLCollectionOf<Element>;
     };
 
     Element.prototype.getElementsByClassName = function (classNames: string) {
       const results = originalElementGetElementsByClassName.call(this, classNames);
-      return createFakeNodeList(filterNodeList(results)) as any;
+      return createFakeNodeList(filterNodeList(results)) as unknown as HTMLCollectionOf<Element>;
     };
 
     // Intercept TreeWalker - used by replay tools for efficient DOM traversal
-    const OriginalTreeWalker = window.TreeWalker;
     const originalCreateTreeWalker = Document.prototype.createTreeWalker;
 
     Document.prototype.createTreeWalker = function (
@@ -711,7 +721,9 @@ export default defineContentScript({
         const cloneEl = clone as Element;
         // Remove elements with grapes IDs
         const grapesElements = cloneEl.querySelectorAll('[id*="grapes"], [data-grapes-injected]');
-        grapesElements.forEach((el) => el.remove());
+        for (const el of grapesElements) {
+          el.remove();
+        }
 
         // Also check the root element itself
         if (isGrapesNode(cloneEl)) {
@@ -770,7 +782,7 @@ export default defineContentScript({
           }
           // Convert to array and filter, return array-like object
           const filtered = Array.from(all).filter((el) => !isGrapesNode(el));
-          return createFakeNodeList(filtered as Element[]) as any;
+          return createFakeNodeList(filtered as Element[]) as unknown as HTMLAllCollection;
         },
         configurable: true,
       });
@@ -955,7 +967,7 @@ export default defineContentScript({
 
     // Intercept HTMLCanvasElement.toDataURL
     const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function (type?: string, quality?: any): string {
+    HTMLCanvasElement.prototype.toDataURL = function (type?: string, quality?: unknown): string {
       // Check if this looks like fingerprinting (small canvas, no visible content)
       const width = this.width;
       const height = this.height;
@@ -984,7 +996,7 @@ export default defineContentScript({
     HTMLCanvasElement.prototype.toBlob = function (
       callback: BlobCallback,
       type?: string,
-      quality?: any,
+      quality?: unknown,
     ): void {
       const width = this.width;
       const height = this.height;
@@ -1001,7 +1013,7 @@ export default defineContentScript({
         }
       }
 
-      return originalToBlob.call(this, callback, type, quality);
+      originalToBlob.call(this, callback, type, quality);
     };
 
     // Intercept CanvasRenderingContext2D.getImageData
@@ -1034,7 +1046,7 @@ export default defineContentScript({
     const originalGetContext = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function (
       contextId: string,
-      options?: any,
+      options?: Record<string, unknown>,
     ): RenderingContext | null {
       const context = originalGetContext.call(this, contextId, options);
 
@@ -1042,7 +1054,7 @@ export default defineContentScript({
         const gl = context as WebGLRenderingContext;
         const originalGetParameter = gl.getParameter.bind(gl);
 
-        gl.getParameter = (pname: number): any => {
+        gl.getParameter = (pname: number): unknown => {
           // RENDERER and VENDOR are commonly used for fingerprinting
           const UNMASKED_VENDOR_WEBGL = 0x9245;
           const UNMASKED_RENDERER_WEBGL = 0x9246;
@@ -1081,15 +1093,19 @@ export default defineContentScript({
     // AUDIO FINGERPRINTING PROTECTION
 
     // Intercept AudioContext to add noise to audio processing
-    const OriginalAudioContext = window.AudioContext || (window as any).webkitAudioContext;
+    const OriginalAudioContext =
+      window.AudioContext || (window as unknown as Record<string, unknown>).webkitAudioContext;
     const OriginalOfflineAudioContext =
-      window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
+      window.OfflineAudioContext ||
+      (window as unknown as Record<string, unknown>).webkitOfflineAudioContext;
 
     if (OriginalAudioContext) {
       const audioNoiseAmount = 0.0001 * sessionNoiseSeed;
 
       // Create a proxy for AudioContext
-      (window as any).AudioContext = (options?: AudioContextOptions) => {
+      (window as unknown as Record<string, unknown>).AudioContext = (
+        options?: AudioContextOptions,
+      ) => {
         const ctx = new OriginalAudioContext(options);
 
         // Intercept createAnalyser
@@ -1134,13 +1150,17 @@ export default defineContentScript({
       };
 
       // Copy static properties
-      Object.setPrototypeOf((window as any).AudioContext, OriginalAudioContext);
-      (window as any).AudioContext.prototype = OriginalAudioContext.prototype;
+      Object.setPrototypeOf(
+        (window as unknown as Record<string, unknown>).AudioContext,
+        OriginalAudioContext,
+      );
+      (window as unknown as Record<string, unknown>).AudioContext.prototype =
+        OriginalAudioContext.prototype;
     }
 
     if (OriginalOfflineAudioContext) {
       // OfflineAudioContext is commonly used for fingerprinting
-      (window as any).OfflineAudioContext = (
+      (window as unknown as Record<string, unknown>).OfflineAudioContext = (
         numberOfChannels: number,
         length: number,
         sampleRate: number,
@@ -1166,8 +1186,12 @@ export default defineContentScript({
         return ctx;
       };
 
-      Object.setPrototypeOf((window as any).OfflineAudioContext, OriginalOfflineAudioContext);
-      (window as any).OfflineAudioContext.prototype = OriginalOfflineAudioContext.prototype;
+      Object.setPrototypeOf(
+        (window as unknown as Record<string, unknown>).OfflineAudioContext,
+        OriginalOfflineAudioContext,
+      );
+      (window as unknown as Record<string, unknown>).OfflineAudioContext.prototype =
+        OriginalOfflineAudioContext.prototype;
     }
 
     // CLIENT RECTS FINGERPRINTING PROTECTION
@@ -1178,7 +1202,7 @@ export default defineContentScript({
       const rect = originalGetBoundingClientRect.call(this);
 
       // Check if this might be fingerprinting (measuring specific test elements)
-      const tagName = this.tagName?.toLowerCase();
+      const _tagName = this.tagName?.toLowerCase();
       const hasNoContent = !this.textContent?.trim();
       const isSmall = rect.width < 50 && rect.height < 50;
       const isHidden =
@@ -1229,7 +1253,7 @@ export default defineContentScript({
     if (originalVisibilityStateDescriptor?.get) {
       Object.defineProperty(Document.prototype, 'visibilityState', {
         get: function () {
-          const realState = originalVisibilityStateDescriptor.get!.call(this);
+          const realState = originalVisibilityStateDescriptor.get?.call(this);
           // Only notify if they're actually checking and it would have been hidden
           if (realState === 'hidden') {
             notifyVisibilityTracking();
@@ -1250,7 +1274,7 @@ export default defineContentScript({
     if (originalHiddenDescriptor?.get) {
       Object.defineProperty(Document.prototype, 'hidden', {
         get: function () {
-          const realHidden = originalHiddenDescriptor.get!.call(this);
+          const realHidden = originalHiddenDescriptor.get?.call(this);
           if (realHidden) {
             notifyVisibilityTracking();
           }
@@ -1283,7 +1307,8 @@ export default defineContentScript({
       if (type === 'visibilitychange' && listener) {
         notifyVisibilityTracking();
         if (!protectionEnabled) {
-          return originalAddEventListener.call(this, type, listener, options);
+          originalAddEventListener.call(this, type, listener, options);
+          return;
         }
 
         // Create a wrapper that only fires when becoming visible (not hidden)
@@ -1304,10 +1329,11 @@ export default defineContentScript({
         };
 
         visibilityHandlers.set(listener, wrapper);
-        return originalAddEventListener.call(this, type, wrapper, options);
+        originalAddEventListener.call(this, type, wrapper, options);
+        return;
       }
 
-      return originalAddEventListener.call(this, type, listener, options);
+      originalAddEventListener.call(this, type, listener, options);
     };
 
     EventTarget.prototype.removeEventListener = function (
@@ -1319,11 +1345,12 @@ export default defineContentScript({
         const wrapper = visibilityHandlers.get(listener);
         if (wrapper) {
           visibilityHandlers.delete(listener);
-          return originalRemoveEventListener.call(this, type, wrapper, options);
+          originalRemoveEventListener.call(this, type, wrapper, options);
+          return;
         }
       }
 
-      return originalRemoveEventListener.call(this, type, listener, options);
+      originalRemoveEventListener.call(this, type, listener, options);
     };
 
     // Also intercept Page Visibility API via document event handlers
@@ -1333,11 +1360,11 @@ export default defineContentScript({
     );
 
     if (originalOnVisibilityChange) {
-      let storedHandler: ((this: Document, ev: Event) => any) | null = null;
+      let storedHandler: ((this: Document, ev: Event) => unknown) | null = null;
 
       Object.defineProperty(Document.prototype, 'onvisibilitychange', {
         get: () => storedHandler,
-        set: function (handler: ((this: Document, ev: Event) => any) | null) {
+        set: function (handler: ((this: Document, ev: Event) => unknown) | null) {
           if (handler) {
             notifyVisibilityTracking();
           }
@@ -1357,7 +1384,7 @@ export default defineContentScript({
     const focusTrackingThreshold = 3; // Alert after 3 focus/blur listeners
     let focusBlurListenerCount = 0;
 
-    const originalWindowAddEventListener = window.addEventListener.bind(window);
+    const _originalWindowAddEventListener = window.addEventListener.bind(window);
 
     // Note: We already overrode EventTarget.prototype.addEventListener above,
     // but we can track focus/blur specifically here
@@ -1379,7 +1406,7 @@ export default defineContentScript({
       options?: boolean | AddEventListenerOptions,
     ): void {
       checkFocusTracking(type);
-      return currentAddEventListener.call(this, type, listener, options);
+      currentAddEventListener.call(this, type, listener, options);
     };
 
     // ======================================================================
@@ -1570,21 +1597,23 @@ export default defineContentScript({
       password?: string | null,
     ): void {
       const urlStr = typeof url === 'string' ? url : url.href;
-      (this as any).__grapesUrl = urlStr;
-      (this as any).__grapesIsTracking = isTrackingUrl(urlStr);
+      (this as Record<string, unknown>).__grapesUrl = urlStr;
+      (this as Record<string, unknown>).__grapesIsTracking = isTrackingUrl(urlStr);
 
-      return originalXHROpen.call(this, method, url, async, username, password);
+      originalXHROpen.call(this, method, url, async, username, password);
     };
 
     XMLHttpRequest.prototype.send = function (
       body?: Document | XMLHttpRequestBodyInit | null,
     ): void {
-      const trackingCheck = (this as any).__grapesIsTracking;
+      const trackingCheck = (this as Record<string, unknown>).__grapesIsTracking as
+        | { isTracking: boolean; type: string }
+        | undefined;
 
       if (trackingCheck?.isTracking) {
         notifyTrackingDetected('xhr');
         if (protectionEnabled) {
-          console.log('[GRAPES] Blocked XHR to:', (this as any).__grapesUrl);
+          console.log('[GRAPES] Blocked XHR to:', (this as Record<string, unknown>).__grapesUrl);
           Object.defineProperty(this, 'status', { value: 200, writable: false });
           Object.defineProperty(this, 'statusText', { value: 'OK', writable: false });
           Object.defineProperty(this, 'responseText', { value: '', writable: false });
@@ -1597,13 +1626,16 @@ export default defineContentScript({
         }
       }
 
-      return originalXHRSend.call(this, body);
+      originalXHRSend.call(this, body);
     };
 
     // INTERCEPT Image loading for tracking pixels
     const OriginalImage = window.Image;
 
-    (window as any).Image = (width?: number, height?: number): HTMLImageElement => {
+    (window as unknown as Record<string, unknown>).Image = (
+      width?: number,
+      height?: number,
+    ): HTMLImageElement => {
       const img = new OriginalImage(width, height);
       const originalSrcDescriptor = Object.getOwnPropertyDescriptor(
         HTMLImageElement.prototype,
@@ -1646,7 +1678,7 @@ export default defineContentScript({
     };
 
     // Preserve Image prototype
-    (window as any).Image.prototype = OriginalImage.prototype;
+    (window as unknown as Record<string, unknown>).Image.prototype = OriginalImage.prototype;
 
     // OBSERVE DOM for tracking pixels (1x1 images, invisible images)
     const trackingPixelObserver = new OriginalMutationObserver((mutations) => {
@@ -1663,7 +1695,11 @@ export default defineContentScript({
 
             // Check for img elements within added nodes
             const images = element.querySelectorAll?.('img');
-            images?.forEach((img) => checkAndBlockTrackingImage(img as HTMLImageElement));
+            if (images) {
+              for (const img of images) {
+                checkAndBlockTrackingImage(img as HTMLImageElement);
+              }
+            }
 
             // Check for iframe tracking pixels
             if (element.tagName === 'IFRAME') {
@@ -1743,6 +1779,143 @@ export default defineContentScript({
       document.addEventListener('DOMContentLoaded', startTrackingObserver);
     } else {
       startTrackingObserver();
+    }
+
+    // ------------------------------------------------------------------
+    // Spoof mode: replace browser APIs with junk-data-returning versions
+    // ------------------------------------------------------------------
+
+    const SPOOF_SCREENS: [number, number][] = [
+      [1920, 1080],
+      [1366, 768],
+      [1536, 864],
+      [1440, 900],
+      [1280, 720],
+      [2560, 1440],
+      [3840, 2160],
+      [1600, 900],
+    ];
+    const SPOOF_TZ = [
+      'America/New_York',
+      'America/Chicago',
+      'America/Denver',
+      'America/Los_Angeles',
+      'Europe/London',
+      'Europe/Berlin',
+      'Asia/Tokyo',
+      'Australia/Sydney',
+    ];
+    const SPOOF_LANG = ['en-US', 'en-GB', 'fr-FR', 'de-DE', 'es-ES', 'ja-JP', 'pt-BR'];
+    const SPOOF_PLAT = ['Win32', 'MacIntel', 'Linux x86_64'];
+    const SPOOF_GPU = [
+      'ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)',
+      'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060, OpenGL 4.5)',
+      'ANGLE (AMD, AMD Radeon RX 580, OpenGL 4.5)',
+      'ANGLE (Apple, Apple M1, OpenGL 4.1)',
+    ];
+
+    function spoofPick<T>(arr: T[]): T {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+    function spoofRandInt(a: number, b: number) {
+      return Math.floor(Math.random() * (b - a + 1)) + a;
+    }
+    function _spoofHex(n: number) {
+      let s = '';
+      for (let i = 0; i < n; i++) s += Math.floor(Math.random() * 16).toString(16);
+      return s;
+    }
+
+    function installSpoofOverrides() {
+      const [sw, sh] = spoofPick(SPOOF_SCREENS);
+      const tz = spoofPick(SPOOF_TZ);
+      const lang = spoofPick(SPOOF_LANG);
+      const plat = spoofPick(SPOOF_PLAT);
+      const gpu = spoofPick(SPOOF_GPU);
+      const cores = spoofPick([2, 4, 6, 8, 12, 16]);
+      const mem = spoofPick([2, 4, 8, 16]);
+
+      // Navigator overrides
+      const navProps: Record<string, unknown> = {
+        hardwareConcurrency: cores,
+        deviceMemory: mem,
+        language: lang,
+        languages: [lang, lang.split('-')[0]],
+        platform: plat,
+      };
+      for (const [k, v] of Object.entries(navProps)) {
+        try {
+          Object.defineProperty(Navigator.prototype, k, {
+            get() {
+              return v;
+            },
+            configurable: true,
+          });
+        } catch {}
+      }
+
+      // Screen overrides
+      const scrProps: Record<string, number> = {
+        width: sw,
+        height: sh,
+        availWidth: sw,
+        availHeight: sh - 40,
+        colorDepth: 24,
+        pixelDepth: 24,
+      };
+      for (const [k, v] of Object.entries(scrProps)) {
+        try {
+          Object.defineProperty(Screen.prototype, k, {
+            get() {
+              return v;
+            },
+            configurable: true,
+          });
+        } catch {}
+      }
+
+      // Canvas noise
+      const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+      HTMLCanvasElement.prototype.toDataURL = function (...args: Parameters<typeof origToDataURL>) {
+        const ctx = this.getContext('2d');
+        if (ctx) {
+          try {
+            const d = ctx.getImageData(0, 0, this.width, this.height);
+            for (let i = 0; i < d.data.length; i += 4) {
+              d.data[i] = Math.min(255, Math.max(0, d.data[i] + spoofRandInt(-2, 2)));
+              d.data[i + 1] = Math.min(255, Math.max(0, d.data[i + 1] + spoofRandInt(-2, 2)));
+              d.data[i + 2] = Math.min(255, Math.max(0, d.data[i + 2] + spoofRandInt(-2, 2)));
+            }
+            ctx.putImageData(d, 0, 0);
+          } catch {}
+        }
+        return origToDataURL.apply(this, args);
+      };
+
+      // WebGL renderer spoofing
+      const origGetParam = WebGLRenderingContext.prototype.getParameter;
+      WebGLRenderingContext.prototype.getParameter = function (pname: GLenum) {
+        if (pname === 0x9246) return gpu;
+        if (pname === 0x9245) return 'Google Inc.';
+        return origGetParam.call(this, pname);
+      };
+      try {
+        const origGetParam2 = WebGL2RenderingContext.prototype.getParameter;
+        WebGL2RenderingContext.prototype.getParameter = function (pname: GLenum) {
+          if (pname === 0x9246) return gpu;
+          if (pname === 0x9245) return 'Google Inc.';
+          return origGetParam2.call(this, pname);
+        };
+      } catch {}
+
+      // Timezone spoofing
+      const origResolved = Intl.DateTimeFormat.prototype.resolvedOptions;
+      Intl.DateTimeFormat.prototype.resolvedOptions = function () {
+        const opts = origResolved.call(this);
+        return { ...opts, timeZone: tz };
+      };
+
+      console.log('[GRAPES] Spoof overrides installed — returning junk data to trackers');
     }
 
     console.log('[GRAPES] Stealth mode activated - MutationObserver intercepted');

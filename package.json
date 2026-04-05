@@ -14,7 +14,9 @@
     "postinstall": "wxt prepare",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -27,6 +29,7 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "typescript": "^5.9.3",
+    "vitest": "^4.1.2",
     "wxt": "^0.20.13"
   }
 }

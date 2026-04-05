@@ -1,19 +1,25 @@
 import type { CoreRequest, CoreResponse } from '../core/contracts/messages';
-import { SCHEMA_VERSION, type ProtectionMode, type ThreatCategory, type ThreatEvent } from '../core/contracts/types';
+import {
+  type ProtectionMode,
+  SCHEMA_VERSION,
+  type ThreatCategory,
+  type ThreatEvent,
+} from '../core/contracts/types';
 import { isCoreRequest } from '../core/contracts/validators';
 import { normalizeLegacyDetectionType } from '../core/detection/normalize';
 import { ThreatLogStore } from '../core/logging/log-store';
+import { extractBaseDomain } from '../core/services/domain';
+import { getProtectionStatusForDomain } from '../core/services/policy';
+import { HttpSyncProvider } from '../core/sharing/http-provider';
 import { MockSyncProvider } from '../core/sharing/provider';
 import { SharingQueueService } from '../core/sharing/queue';
 import { toSharedReport } from '../core/sharing/sanitizer';
 import {
   DEFAULT_STORAGE_STATE_V2,
   fromLegacyPreferences,
-  toLegacyPreferences,
   type StorageStateV2,
+  toLegacyPreferences,
 } from '../core/storage/schema';
-import { extractBaseDomain } from '../core/services/domain';
-import { getProtectionStatusForDomain } from '../core/services/policy';
 import type {
   GrapesPreferences,
   SurveillanceData,
@@ -26,7 +32,44 @@ const INSTALL_MARKER_KEY = 'v2_install_state';
 const LEGACY_LOGS_KEY = 'surveillanceLogs';
 
 const logStore = new ThreatLogStore();
-const sharingQueue = new SharingQueueService(new MockSyncProvider());
+const mockProvider = new MockSyncProvider();
+const httpProvider = new HttpSyncProvider();
+let sharingQueue = new SharingQueueService(mockProvider);
+
+/**
+ * Switch the sharing queue between mock (local-only) and HTTP provider
+ * based on contribution consent state.
+ */
+const FLUSH_ALARM_NAME = 'grapes-flush-queue';
+const DEFAULT_FLUSH_INTERVAL_MIN = 60;
+const MIN_BATCH_SIZE = 5;
+
+function updateSharingProvider(contributionEnabled: boolean, endpoint?: string): void {
+  if (endpoint) {
+    httpProvider.setEndpoint(endpoint);
+  }
+  sharingQueue = new SharingQueueService(contributionEnabled ? httpProvider : mockProvider);
+}
+
+/**
+ * Schedule periodic queue flushes using the alarms API.
+ * MV3 service workers can be terminated at any time, so we use alarms
+ * instead of setInterval.
+ */
+async function scheduleAutoFlush(intervalMinutes?: number): Promise<void> {
+  const interval = intervalMinutes || DEFAULT_FLUSH_INTERVAL_MIN;
+  await browser.alarms.clear(FLUSH_ALARM_NAME);
+  await browser.alarms.create(FLUSH_ALARM_NAME, {
+    delayInMinutes: interval,
+    periodInMinutes: interval,
+  });
+}
+
+async function handleAutoFlush(): Promise<void> {
+  const state = await sharingQueue.getState();
+  if (!state.consent || state.queue.length < MIN_BATCH_SIZE) return;
+  await sharingQueue.flushNow();
+}
 
 const tabSurveillance: Map<number, SurveillanceData> = new Map();
 const tabLogEntries: Map<number, SurveillanceLogEntry> = new Map();
@@ -178,7 +221,10 @@ function mergeSurveillanceEvents(
   return [...existing];
 }
 
-function mergeManyEvents(existing: SurveillanceEvent[], incoming: SurveillanceEvent[]): SurveillanceEvent[] {
+function mergeManyEvents(
+  existing: SurveillanceEvent[],
+  incoming: SurveillanceEvent[],
+): SurveillanceEvent[] {
   let next = [...existing];
   for (const event of incoming) {
     next = mergeSurveillanceEvents(next, event);
@@ -212,7 +258,10 @@ function buildEvent(
 
 async function processThreatEvent(event: ThreatEvent): Promise<void> {
   updateSurveillanceSummary(event.tabId, event);
-  updateBadgeForTab(event.tabId, tabSurveillance.get(event.tabId)!);
+  const surveillance = tabSurveillance.get(event.tabId);
+  if (surveillance) {
+    updateBadgeForTab(event.tabId, surveillance);
+  }
 
   const state = await getState();
   if (state.coreSettings.loggingEnabled) {
@@ -291,6 +340,38 @@ async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
     case 'CORE_QUEUE_REPORT':
       await sharingQueue.enqueue(request.report);
       return { ok: true, data: { success: true } };
+    case 'CORE_SET_CONTRIBUTION_CONSENT': {
+      const nextContrib = {
+        ...state.contribution,
+        consentGiven: request.enabled,
+        consentTimestamp: request.enabled ? Date.now() : state.contribution.consentTimestamp,
+      };
+      const nextState = { ...state, contribution: nextContrib };
+      await setState(nextState);
+      updateSharingProvider(request.enabled, nextContrib.endpoint);
+      if (request.enabled) {
+        void scheduleAutoFlush(nextContrib.uploadIntervalMinutes);
+      } else {
+        void browser.alarms.clear(FLUSH_ALARM_NAME);
+      }
+      return { ok: true, data: { success: true } };
+    }
+    case 'CORE_GET_CONTRIBUTION_STATUS':
+      return {
+        ok: true,
+        data: {
+          consentGiven: state.contribution.consentGiven,
+          consentTimestamp: state.contribution.consentTimestamp,
+          endpoint: state.contribution.endpoint,
+        },
+      };
+    case 'CORE_SET_CONTRIBUTION_ENDPOINT': {
+      const nextContrib = { ...state.contribution, endpoint: request.endpoint };
+      const nextState = { ...state, contribution: nextContrib };
+      await setState(nextState);
+      httpProvider.setEndpoint(request.endpoint);
+      return { ok: true, data: { success: true } };
+    }
   }
 }
 
@@ -304,10 +385,22 @@ function createEnvelope() {
 }
 
 export default defineBackground(() => {
-  void ensureV2State();
+  void ensureV2State().then((state) => {
+    updateSharingProvider(state.contribution?.consentGiven ?? false, state.contribution?.endpoint);
+    if (state.contribution?.consentGiven) {
+      void scheduleAutoFlush(state.contribution.uploadIntervalMinutes);
+    }
+  });
 
   browser.runtime.onInstalled.addListener(() => {
     void ensureV2State();
+  });
+
+  // Periodic auto-flush of queued reports
+  browser.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === FLUSH_ALARM_NAME) {
+      void handleAutoFlush();
+    }
   });
 
   browser.runtime.onMessage.addListener((message, sender) => {
@@ -324,21 +417,21 @@ export default defineBackground(() => {
       sender.tab?.id &&
       sender.tab.url
     ) {
+      const tabId = sender.tab.id;
+      const tabUrl = sender.tab.url;
       return getState().then((state) => {
-        const domain = extractBaseDomain(new URL(sender.tab!.url!).hostname);
+        const domain = extractBaseDomain(new URL(tabUrl).hostname);
         const status = getProtectionStatusForDomain(domain, state);
         const normalized = normalizeLegacyDetectionType(message.type);
         if (!normalized) {
           return { ok: false, error: 'unknown-detection-type' };
         }
 
-        const evidence =
-          message.data?.tools ||
-          message.data?.types ||
-          [message.data?.targetType || 'detected'];
+        const evidence = message.data?.tools ||
+          message.data?.types || [message.data?.targetType || 'detected'];
         const event = buildEvent(
-          sender.tab!.id!,
-          sender.tab!.url!,
+          tabId,
+          tabUrl,
           domain,
           normalized.category,
           normalized.detector,
@@ -366,7 +459,9 @@ export default defineBackground(() => {
       return Promise.resolve(message.tabId ? tabLogEntries.get(message.tabId) || null : null);
     }
     if (message.type === 'GET_ALL_LOGS') {
-      return browser.storage.local.get([LEGACY_LOGS_KEY]).then((result) => result[LEGACY_LOGS_KEY] || []);
+      return browser.storage.local
+        .get([LEGACY_LOGS_KEY])
+        .then((result) => result[LEGACY_LOGS_KEY] || []);
     }
     if (message.type === 'CLEAR_LOGS') {
       return handleCoreRequest({
