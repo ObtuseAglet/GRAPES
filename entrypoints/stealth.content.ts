@@ -9,7 +9,20 @@
  *
  * Protection can be enabled/disabled via custom events from the content script.
  * Detection always runs regardless of protection status.
+ *
+ * Core detection / filtering logic is extracted into `core/stealth/` so that
+ * it can be unit-tested independently of the browser runtime.
  */
+
+import {
+  isGrapesNode as _isGrapesNode,
+  isGrapesMutation as _isGrapesMutation,
+  filterMutations as _filterMutations,
+  GRAPES_MARKERS as _GRAPES_MARKERS,
+} from '../core/stealth/node-detection';
+import { isSuspiciousObservation as _isSuspiciousObservation } from '../core/stealth/observation';
+import { isTrackingUrl as _isTrackingUrl, TRACKING_DOMAINS as _TRACKING_DOMAINS, TRACKING_PATTERNS as _TRACKING_PATTERNS } from '../core/stealth/tracking';
+import { detectSessionReplayTools as _detectSessionReplayTools, SESSION_REPLAY_SIGNATURES as _SESSION_REPLAY_SIGNATURES } from '../core/stealth/session-replay';
 
 export default defineContentScript({
   matches: ['<all_urls>'],
