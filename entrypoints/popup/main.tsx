@@ -1129,9 +1129,7 @@ function DataTab({
             Save
           </button>
         </div>
-        {endpointSaved && (
-          <div className="setting-feedback success">Endpoint saved.</div>
-        )}
+        {endpointSaved && <div className="setting-feedback success">Endpoint saved.</div>}
         <div className="setting-hint">
           Your GRAPES dashboard server URL. Deploy with Railway then paste the URL here.
         </div>

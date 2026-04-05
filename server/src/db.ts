@@ -59,7 +59,9 @@ export interface IncomingReport {
 // Write
 // ---------------------------------------------------------------------------
 
-const K_ANONYMITY_THRESHOLD = Number(process.env.K_ANONYMITY_THRESHOLD) || 5;
+function getKThreshold(): number {
+  return Number(process.env.K_ANONYMITY_THRESHOLD) || 5;
+}
 
 export function insertReports(reports: IncomingReport[]): { inserted: number; duplicates: number } {
   const database = getDb();
@@ -128,7 +130,7 @@ export function getOverviewStats(): OverviewStats {
     HAVING COUNT(DISTINCT ts / 86400000) >= ?
     ORDER BY count DESC
     LIMIT 10
-  `).all(K_ANONYMITY_THRESHOLD) as Array<{ domain: string; count: number; lastSeen: number }>;
+  `).all(getKThreshold()) as Array<{ domain: string; count: number; lastSeen: number }>;
 
   return {
     totalReports: totals.total,
@@ -174,7 +176,7 @@ export function getDomainLeaderboard(
     HAVING COUNT(DISTINCT ts / 86400000) >= ?
     ORDER BY totalThreats DESC
     LIMIT ? OFFSET ?`;
-  params.push(K_ANONYMITY_THRESHOLD, limit, offset);
+  params.push(getKThreshold(), limit, offset);
 
   return database.prepare(query).all(...params) as DomainLeaderboardEntry[];
 }
@@ -221,7 +223,7 @@ export function getDomainDetail(domain: string): DomainDetail | null {
     'SELECT COUNT(DISTINCT ts / 86400000) as days FROM reports WHERE domain = ?',
   ).get(domain) as { days: number };
 
-  if (dayCount.days < K_ANONYMITY_THRESHOLD) return null;
+  if (dayCount.days < getKThreshold()) return null;
 
   const categories = database.prepare(`
     SELECT category, COUNT(*) as count,

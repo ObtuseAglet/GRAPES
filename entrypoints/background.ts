@@ -258,7 +258,10 @@ function buildEvent(
 
 async function processThreatEvent(event: ThreatEvent): Promise<void> {
   updateSurveillanceSummary(event.tabId, event);
-  updateBadgeForTab(event.tabId, tabSurveillance.get(event.tabId)!);
+  const surveillance = tabSurveillance.get(event.tabId);
+  if (surveillance) {
+    updateBadgeForTab(event.tabId, surveillance);
+  }
 
   const state = await getState();
   if (state.coreSettings.loggingEnabled) {
@@ -414,8 +417,10 @@ export default defineBackground(() => {
       sender.tab?.id &&
       sender.tab.url
     ) {
+      const tabId = sender.tab.id;
+      const tabUrl = sender.tab.url;
       return getState().then((state) => {
-        const domain = extractBaseDomain(new URL(sender.tab!.url!).hostname);
+        const domain = extractBaseDomain(new URL(tabUrl).hostname);
         const status = getProtectionStatusForDomain(domain, state);
         const normalized = normalizeLegacyDetectionType(message.type);
         if (!normalized) {
@@ -425,8 +430,8 @@ export default defineBackground(() => {
         const evidence = message.data?.tools ||
           message.data?.types || [message.data?.targetType || 'detected'];
         const event = buildEvent(
-          sender.tab!.id!,
-          sender.tab!.url!,
+          tabId,
+          tabUrl,
           domain,
           normalized.category,
           normalized.detector,

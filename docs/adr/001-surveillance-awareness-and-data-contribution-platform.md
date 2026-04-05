@@ -135,7 +135,8 @@ GRAPES detects threats (existing)
 1. **Phase A — Inform enhancements** `COMPLETE`: Threat explainer content module (`lib/explainers.ts`), ThreatExplainer accordion component, SiteReportCard with letter-grade scoring, integrated into popup ActivityTab.
 2. **Phase B — Junk data / spoofing** `COMPLETE`: `ProtectionMode = 'spoof'` added, junk data generators (`core/spoof/generators.ts`), API override injector (`core/spoof/injector.ts`), inline MAIN world spoof overrides in `stealth.content.ts`, purple "Spoofing" status in popup.
 3. **Phase C — Contribution pipeline** `COMPLETE`: `ContributionSettings` in storage schema, `HttpSyncProvider` for real HTTP transport, enhanced sanitizer (email/IP stripping, day-rounded timestamps), `CORE_SET_CONTRIBUTION_CONSENT` / `CORE_GET_CONTRIBUTION_STATUS` messages, consent toggle in popup Data tab.
-4. **Phase D — Server infrastructure and public dashboard** `IN PROGRESS`: See below.
+4. **Phase D — Server infrastructure and public dashboard** `COMPLETE`: See below.
+5. **Phase E — Testing** `COMPLETE`: See below.
 
 ### Phase D: Server Infrastructure and Public Dashboard
 
@@ -227,6 +228,42 @@ Technology: **React + Vite** (same React version as extension, shared familiarit
 - Dashboard: static build (`dashboard/dist/`) served by the same Express server or any CDN
 - Docker: single `Dockerfile` packages both server and dashboard build
 - Environment config via `.env`: `PORT`, `DATABASE_PATH`, `RATE_LIMIT_MAX`, `K_ANONYMITY_THRESHOLD`
+
+### Phase E: Testing
+
+**Framework:** Vitest across all three codebases (extension core, server, dashboard) for consistency.
+
+#### Extension Tests (`core/**/*.test.ts`, `lib/**/*.test.ts`)
+
+| Test File | Covers |
+|-----------|--------|
+| `core/services/domain.test.ts` | `extractBaseDomain` (localhost, IPs, subdomains, ccTLDs), `extractDomainFromUrl` |
+| `core/protection/mode.test.ts` | `isProtectionEnabled` (full, spoof, detection-only, disabled), `shouldDetect` |
+| `core/sharing/sanitizer.test.ts` | `toSharedReport`: URL stripping, day-rounded timestamps, email/IP redaction, query param removal, evidence truncation and limit |
+| `core/spoof/generators.test.ts` | `generateFakeFingerprint` (field validation, uniqueness), `injectCanvasNoise` (mutation, alpha preservation, clamping), `generateDecoyReplayBatch` (count, types, ordering), `generateFakeReferrer`, `generateFakeClientId` |
+| `lib/explainers.test.ts` | `THREAT_EXPLAINERS` (coverage of all 5 categories, required fields), `severityLabel`, `severityColor` |
+
+#### Server Tests (`server/src/**/*.test.ts`)
+
+| Test File | Covers |
+|-----------|--------|
+| `server/src/validate.test.ts` | `validateReportBatch`: valid batch acceptance, null/missing/empty rejection, batch size limits, field validation (category, detector, confidence, mode, blocked, timestamp, domain length), evidence truncation |
+| `server/src/db.test.ts` | SQLite layer: `insertReports` (insert + dedup), `getOverviewStats`, `getDomainLeaderboard` (sorting, category filter), `getCategoryStats`, `getDomainDetail` (found + not found), k-anonymity threshold |
+
+#### Run Commands
+
+```bash
+# Extension core tests
+npm test
+
+# Server tests
+cd server && npm test
+
+# All builds + lint
+npm run build && npm run lint
+cd server && npx tsc --noEmit
+cd dashboard && npx tsc --noEmit && npx vite build
+```
 
 ### Privacy Guardrails
 
