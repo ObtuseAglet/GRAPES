@@ -40,11 +40,35 @@ let sharingQueue = new SharingQueueService(mockProvider);
  * Switch the sharing queue between mock (local-only) and HTTP provider
  * based on contribution consent state.
  */
+const FLUSH_ALARM_NAME = 'grapes-flush-queue';
+const DEFAULT_FLUSH_INTERVAL_MIN = 60;
+const MIN_BATCH_SIZE = 5;
+
 function updateSharingProvider(contributionEnabled: boolean, endpoint?: string): void {
   if (endpoint) {
     httpProvider.setEndpoint(endpoint);
   }
   sharingQueue = new SharingQueueService(contributionEnabled ? httpProvider : mockProvider);
+}
+
+/**
+ * Schedule periodic queue flushes using the alarms API.
+ * MV3 service workers can be terminated at any time, so we use alarms
+ * instead of setInterval.
+ */
+async function scheduleAutoFlush(intervalMinutes?: number): Promise<void> {
+  const interval = intervalMinutes || DEFAULT_FLUSH_INTERVAL_MIN;
+  await browser.alarms.clear(FLUSH_ALARM_NAME);
+  await browser.alarms.create(FLUSH_ALARM_NAME, {
+    delayInMinutes: interval,
+    periodInMinutes: interval,
+  });
+}
+
+async function handleAutoFlush(): Promise<void> {
+  const state = await sharingQueue.getState();
+  if (!state.consent || state.queue.length < MIN_BATCH_SIZE) return;
+  await sharingQueue.flushNow();
 }
 
 const tabSurveillance: Map<number, SurveillanceData> = new Map();
@@ -322,6 +346,11 @@ async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
       const nextState = { ...state, contribution: nextContrib };
       await setState(nextState);
       updateSharingProvider(request.enabled, nextContrib.endpoint);
+      if (request.enabled) {
+        void scheduleAutoFlush(nextContrib.uploadIntervalMinutes);
+      } else {
+        void browser.alarms.clear(FLUSH_ALARM_NAME);
+      }
       return { ok: true, data: { success: true } };
     }
     case 'CORE_GET_CONTRIBUTION_STATUS':
@@ -355,10 +384,20 @@ function createEnvelope() {
 export default defineBackground(() => {
   void ensureV2State().then((state) => {
     updateSharingProvider(state.contribution?.consentGiven ?? false, state.contribution?.endpoint);
+    if (state.contribution?.consentGiven) {
+      void scheduleAutoFlush(state.contribution.uploadIntervalMinutes);
+    }
   });
 
   browser.runtime.onInstalled.addListener(() => {
     void ensureV2State();
+  });
+
+  // Periodic auto-flush of queued reports
+  browser.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === FLUSH_ALARM_NAME) {
+      void handleAutoFlush();
+    }
   });
 
   browser.runtime.onMessage.addListener((message, sender) => {

@@ -6,7 +6,7 @@ export default defineConfig({
   manifest: {
     name: 'GRAPES - Website Appearance Customizer',
     description: 'Customize the appearance of websites based on your preferences',
-    permissions: ['storage', 'activeTab'],
+    permissions: ['storage', 'activeTab', 'alarms'],
     action: {
       default_icon: 'icon.svg',
       default_popup: 'popup.html',
