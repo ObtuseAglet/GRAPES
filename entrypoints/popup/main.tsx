@@ -280,13 +280,14 @@ function Header({ preferences, currentDomain }: HeaderProps) {
 interface TabNavProps {
   currentTab: string;
   onTabChange: (tab: string) => void;
+  cssCustomizationEnabled?: boolean;
 }
 
-function TabNav({ currentTab, onTabChange }: TabNavProps) {
+function TabNav({ currentTab, onTabChange, cssCustomizationEnabled }: TabNavProps) {
   const tabs = [
     { id: 'now', label: '🔬 Now' },
     { id: 'protect', label: '🛡 Protect' },
-    { id: 'edit', label: '🎨 Edit' },
+    ...(cssCustomizationEnabled ? [{ id: 'edit', label: '🎨 Edit' }] : []),
     { id: 'data', label: '📊 Data' },
   ];
 
@@ -1171,6 +1172,7 @@ function PopupApp() {
   const [contributionConsent, setContributionConsent] = useState(false);
   const [contributionEndpoint, setContributionEndpoint] = useState('');
   const [showResetNotice, setShowResetNotice] = useState(false);
+  const [cssCustomizationEnabled, setCssCustomizationEnabled] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -1193,6 +1195,7 @@ function PopupApp() {
           if (coreState?.ok) {
             const ageMs = Date.now() - (coreState.data.installState?.resetTimestamp || 0);
             setShowResetNotice(ageMs < 1000 * 60 * 60 * 24);
+            setCssCustomizationEnabled(!!coreState.data.coreSettings?.featureFlags?.cssCustomization);
           }
 
           const sharingStatus = await browser.runtime.sendMessage({
@@ -1457,7 +1460,7 @@ function PopupApp() {
         </div>
       )}
       <Header preferences={preferences} currentDomain={currentDomain} />
-      <TabNav currentTab={currentTab} onTabChange={setCurrentTab} />
+      <TabNav currentTab={currentTab} onTabChange={setCurrentTab} cssCustomizationEnabled={cssCustomizationEnabled} />
       {currentTab === 'now' && (
         <ActivityTab
           logEntry={logEntry}
@@ -1491,7 +1494,7 @@ function PopupApp() {
           onEndpointChange={handleEndpointChange}
         />
       )}
-      {currentTab === 'edit' && (
+      {currentTab === 'edit' && cssCustomizationEnabled && (
         <StylesTab
           preferences={preferences}
           currentDomain={currentDomain}

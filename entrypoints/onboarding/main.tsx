@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { browser } from 'wxt/browser';
 import type { GrapesPreferences } from '../../lib/types';
@@ -212,13 +212,36 @@ function OnboardingApp() {
   const [step, setStep] = useState(0);
   const [selectedMode, setSelectedMode] = useState<'full' | 'detection-only'>('detection-only');
   const [enableCustomStyles, setEnableCustomStyles] = useState(false);
+  const [cssFeatureEnabled, setCssFeatureEnabled] = useState(false);
+
+  // Check if CSS customization feature flag is on
+  useEffect(() => {
+    browser.runtime
+      .sendMessage({
+        type: 'CORE_GET_STATE',
+        requestId: `onboard-flags-${Date.now()}`,
+        source: 'onboarding',
+        timestamp: Date.now(),
+        schemaVersion: 2,
+      })
+      .then((response: Record<string, unknown>) => {
+        if (
+          response?.ok &&
+          (response.data as Record<string, unknown>)
+        ) {
+          const data = response.data as { coreSettings?: { featureFlags?: { cssCustomization?: boolean } } };
+          setCssFeatureEnabled(!!data.coreSettings?.featureFlags?.cssCustomization);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleFinish = async () => {
-    // Save preferences
+    // Save preferences — force customStylesEnabled off when feature flag is disabled
     const preferences: GrapesPreferences = {
       globalMode: selectedMode,
       siteSettings: {},
-      customStylesEnabled: enableCustomStyles,
+      customStylesEnabled: cssFeatureEnabled ? enableCustomStyles : false,
       autoDarkMode: false,
       customStyles: {},
       siteStyles: {},
@@ -245,7 +268,7 @@ function OnboardingApp() {
           <ModeSelectionStep
             selectedMode={selectedMode}
             onSelectMode={setSelectedMode}
-            onNext={() => setStep(2)}
+            onNext={() => { cssFeatureEnabled ? setStep(2) : handleFinish(); }}
             onBack={() => setStep(0)}
           />
         )}
