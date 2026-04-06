@@ -1,8 +1,8 @@
 /**
  * @vitest-environment jsdom
  */
-import { describe, expect, it, beforeEach } from 'vitest';
-import { isGrapesNode, isGrapesMutation, filterMutations, GRAPES_MARKERS } from './node-detection';
+import { describe, expect, it } from 'vitest';
+import { filterMutations, GRAPES_MARKERS, isGrapesMutation, isGrapesNode } from './node-detection';
 
 describe('GRAPES_MARKERS', () => {
   it('contains expected marker strings', () => {
@@ -164,8 +164,18 @@ describe('isGrapesMutation', () => {
     div.id = 'app';
     const mutation = makeMutation({
       target: div,
-      addedNodes: { length: 0, item: () => null, [Symbol.iterator]: function* () {}, forEach: () => {} } as unknown as NodeList,
-      removedNodes: { length: 0, item: () => null, [Symbol.iterator]: function* () {}, forEach: () => {} } as unknown as NodeList,
+      addedNodes: {
+        length: 0,
+        item: () => null,
+        [Symbol.iterator]: function* () {},
+        forEach: () => {},
+      } as unknown as NodeList,
+      removedNodes: {
+        length: 0,
+        item: () => null,
+        [Symbol.iterator]: function* () {},
+        forEach: () => {},
+      } as unknown as NodeList,
     });
     expect(isGrapesMutation(mutation)).toBe(false);
   });
@@ -186,8 +196,18 @@ describe('filterMutations', () => {
     return {
       type: 'childList',
       target,
-      addedNodes: { length: 0, item: () => null, [Symbol.iterator]: function* () {}, forEach: () => {} } as unknown as NodeList,
-      removedNodes: { length: 0, item: () => null, [Symbol.iterator]: function* () {}, forEach: () => {} } as unknown as NodeList,
+      addedNodes: {
+        length: 0,
+        item: () => null,
+        [Symbol.iterator]: function* () {},
+        forEach: () => {},
+      } as unknown as NodeList,
+      removedNodes: {
+        length: 0,
+        item: () => null,
+        [Symbol.iterator]: function* () {},
+        forEach: () => {},
+      } as unknown as NodeList,
       previousSibling: null,
       nextSibling: null,
       attributeName: null,
@@ -219,10 +239,7 @@ describe('filterMutations', () => {
   });
 
   it('returns empty array when all mutations are grapes-related', () => {
-    const mutations = [
-      makeMutation('grapes-panel'),
-      makeMutation('grapes-custom-styles'),
-    ];
+    const mutations = [makeMutation('grapes-panel'), makeMutation('grapes-custom-styles')];
     const result = filterMutations(mutations, true);
     expect(result).toHaveLength(0);
   });

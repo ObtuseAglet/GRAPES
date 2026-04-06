@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isTrackingUrl, TRACKING_DOMAINS, TRACKING_PATTERNS, FUNCTIONAL_DOMAINS } from './tracking';
+import { FUNCTIONAL_DOMAINS, isTrackingUrl, TRACKING_DOMAINS, TRACKING_PATTERNS } from './tracking';
 
 const BASE = 'https://example.com';
 
@@ -54,7 +54,10 @@ describe('isTrackingUrl', () => {
     });
 
     it('detects criteo.com', () => {
-      const result = isTrackingUrl('https://dis.criteo.com/dis/rtb/appnexus/cookieMatch.aspx', BASE);
+      const result = isTrackingUrl(
+        'https://dis.criteo.com/dis/rtb/appnexus/cookieMatch.aspx',
+        BASE,
+      );
       expect(result.isTracking).toBe(true);
       expect(result.type).toBe('analytics');
     });
@@ -160,49 +163,38 @@ describe('isTrackingUrl', () => {
     });
 
     it('does NOT block zendesk.com by default', () => {
-      const result = isTrackingUrl('https://static.zdassets.com/ekr/snippet.js', BASE);
-      // zendesk.com isn't in the hostname here, but let's test the actual domain
-      const result2 = isTrackingUrl('https://mycompany.zendesk.com/api/v2/tickets', BASE);
-      expect(result2.isTracking).toBe(false);
-      expect(result2.type).toBe('functional');
+      // zdassets.com CDN won't match — test the actual zendesk.com domain
+      const result = isTrackingUrl('https://mycompany.zendesk.com/api/v2/tickets', BASE);
+      expect(result.isTracking).toBe(false);
+      expect(result.type).toBe('functional');
     });
 
     it('BLOCKS sentry.io when blockFunctional is true', () => {
-      const result = isTrackingUrl(
-        'https://o123.ingest.sentry.io/api/123/envelope/',
-        BASE,
-        { blockFunctional: true },
-      );
+      const result = isTrackingUrl('https://o123.ingest.sentry.io/api/123/envelope/', BASE, {
+        blockFunctional: true,
+      });
       expect(result.isTracking).toBe(true);
       expect(result.type).toBe('functional');
     });
 
     it('BLOCKS bugsnag.com when blockFunctional is true', () => {
-      const result = isTrackingUrl(
-        'https://notify.bugsnag.com/',
-        BASE,
-        { blockFunctional: true },
-      );
+      const result = isTrackingUrl('https://notify.bugsnag.com/', BASE, { blockFunctional: true });
       expect(result.isTracking).toBe(true);
       expect(result.type).toBe('functional');
     });
 
     it('BLOCKS newrelic when blockFunctional is true', () => {
-      const result = isTrackingUrl(
-        'https://bam.nr-data.net/1/asdf',
-        BASE,
-        { blockFunctional: true },
-      );
+      const result = isTrackingUrl('https://bam.nr-data.net/1/asdf', BASE, {
+        blockFunctional: true,
+      });
       expect(result.isTracking).toBe(true);
       expect(result.type).toBe('functional');
     });
 
     it('BLOCKS intercom.io when blockFunctional is true', () => {
-      const result = isTrackingUrl(
-        'https://api-iam.intercom.io/messenger/web/ping',
-        BASE,
-        { blockFunctional: true },
-      );
+      const result = isTrackingUrl('https://api-iam.intercom.io/messenger/web/ping', BASE, {
+        blockFunctional: true,
+      });
       expect(result.isTracking).toBe(true);
       expect(result.type).toBe('functional');
     });

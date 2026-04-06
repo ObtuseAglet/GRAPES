@@ -91,17 +91,18 @@ describe('detectSessionReplayTools', () => {
     });
 
     it('detects CrazyEgg via script src', () => {
-      const result = detectSessionReplayTools({}, ['https://script.crazyegg.com/pages/scripts/123.js']);
+      const result = detectSessionReplayTools({}, [
+        'https://script.crazyegg.com/pages/scripts/123.js',
+      ]);
       expect(result).toContain('crazyegg');
     });
   });
 
   describe('multiple tools', () => {
     it('detects multiple tools at once', () => {
-      const result = detectSessionReplayTools(
-        { hj: () => {}, clarity: () => {} },
-        ['https://cdn.logrocket.io/LogRocket.min.js'],
-      );
+      const result = detectSessionReplayTools({ hj: () => {}, clarity: () => {} }, [
+        'https://cdn.logrocket.io/LogRocket.min.js',
+      ]);
       expect(result).toContain('hotjar');
       expect(result).toContain('clarity');
       expect(result).toContain('logrocket');
@@ -110,10 +111,9 @@ describe('detectSessionReplayTools', () => {
 
     it('prefers global detection over script detection', () => {
       // If a tool is found via globals, it shouldn't check scripts for the same tool
-      const result = detectSessionReplayTools(
-        { hj: () => {} },
-        ['https://static.hotjar.com/c/hotjar-123.js'],
-      );
+      const result = detectSessionReplayTools({ hj: () => {} }, [
+        'https://static.hotjar.com/c/hotjar-123.js',
+      ]);
       // Should only appear once
       expect(result.filter((t) => t === 'hotjar')).toHaveLength(1);
     });
@@ -134,22 +134,16 @@ describe('detectSessionReplayTools', () => {
     });
 
     it('ignores unrelated script sources', () => {
-      const result = detectSessionReplayTools(
-        {},
-        [
-          'https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js',
-          'https://example.com/app.js',
-        ],
-      );
+      const result = detectSessionReplayTools({}, [
+        'https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js',
+        'https://example.com/app.js',
+      ]);
       expect(result).toHaveLength(0);
     });
 
     it('does not flag undefined globals', () => {
       // Explicitly passing undefined values should not trigger
-      const result = detectSessionReplayTools(
-        { hj: undefined, clarity: undefined },
-        [],
-      );
+      const result = detectSessionReplayTools({ hj: undefined, clarity: undefined }, []);
       expect(result).toHaveLength(0);
     });
   });

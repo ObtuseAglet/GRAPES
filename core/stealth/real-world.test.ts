@@ -6,10 +6,10 @@
  * This validates detection efficacy without needing a live browser.
  */
 import { describe, expect, it } from 'vitest';
-import { isTrackingUrl } from './tracking';
-import { detectSessionReplayTools } from './session-replay';
 import { isGrapesNode } from './node-detection';
 import { isSuspiciousObservation } from './observation';
+import { detectSessionReplayTools } from './session-replay';
+import { isTrackingUrl } from './tracking';
 
 const GOOGLE_BASE = 'https://www.google.com';
 
@@ -83,10 +83,7 @@ describe('real-world: google.com tracking patterns', () => {
     });
 
     it('blocks Facebook connect JS', () => {
-      const result = isTrackingUrl(
-        'https://connect.facebook.net/en_US/fbevents.js',
-        GOOGLE_BASE,
-      );
+      const result = isTrackingUrl('https://connect.facebook.net/en_US/fbevents.js', GOOGLE_BASE);
       expect(result.isTracking).toBe(true);
     });
   });
@@ -101,25 +98,28 @@ describe('real-world: google.com tracking patterns', () => {
     });
 
     it('blocks Microsoft Clarity', () => {
-      const result = isTrackingUrl(
-        'https://clarity.ms/tag/abc123xyz',
-        GOOGLE_BASE,
-      );
+      const result = isTrackingUrl('https://clarity.ms/tag/abc123xyz', GOOGLE_BASE);
       expect(result.isTracking).toBe(true);
     });
   });
 
   describe('common tracking pixel URL patterns', () => {
     it('detects generic /pixel endpoint', () => {
-      expect(isTrackingUrl('https://events.example.com/pixel?uid=abc', GOOGLE_BASE).isTracking).toBe(true);
+      expect(
+        isTrackingUrl('https://events.example.com/pixel?uid=abc', GOOGLE_BASE).isTracking,
+      ).toBe(true);
     });
 
     it('detects /beacon endpoint', () => {
-      expect(isTrackingUrl('https://log.example.com/beacon?ts=123', GOOGLE_BASE).isTracking).toBe(true);
+      expect(isTrackingUrl('https://log.example.com/beacon?ts=123', GOOGLE_BASE).isTracking).toBe(
+        true,
+      );
     });
 
     it('detects /collect endpoint', () => {
-      expect(isTrackingUrl('https://stats.example.com/collect?v=1', GOOGLE_BASE).isTracking).toBe(true);
+      expect(isTrackingUrl('https://stats.example.com/collect?v=1', GOOGLE_BASE).isTracking).toBe(
+        true,
+      );
     });
 
     it('detects 1x1 transparent GIF', () => {
@@ -127,7 +127,9 @@ describe('real-world: google.com tracking patterns', () => {
     });
 
     it('detects t.gif tracking pixel', () => {
-      expect(isTrackingUrl('https://mail.example.com/t.gif?id=abc', GOOGLE_BASE).isTracking).toBe(true);
+      expect(isTrackingUrl('https://mail.example.com/t.gif?id=abc', GOOGLE_BASE).isTracking).toBe(
+        true,
+      );
     });
 
     it('detects blank.gif tracking pixel', () => {
@@ -135,13 +137,17 @@ describe('real-world: google.com tracking patterns', () => {
     });
 
     it('detects spacer.png tracking pixel', () => {
-      expect(isTrackingUrl('https://img.example.com/spacer.png', GOOGLE_BASE).isTracking).toBe(true);
+      expect(isTrackingUrl('https://img.example.com/spacer.png', GOOGLE_BASE).isTracking).toBe(
+        true,
+      );
     });
   });
 
   describe('legitimate google.com requests should NOT be blocked', () => {
     it('allows google.com search results page', () => {
-      expect(isTrackingUrl('https://www.google.com/search?q=test', GOOGLE_BASE).isTracking).toBe(false);
+      expect(isTrackingUrl('https://www.google.com/search?q=test', GOOGLE_BASE).isTracking).toBe(
+        false,
+      );
     });
 
     it('allows google.com homepage', () => {
@@ -149,57 +155,55 @@ describe('real-world: google.com tracking patterns', () => {
     });
 
     it('allows Google Fonts', () => {
-      expect(isTrackingUrl('https://fonts.googleapis.com/css2?family=Roboto', GOOGLE_BASE).isTracking).toBe(false);
+      expect(
+        isTrackingUrl('https://fonts.googleapis.com/css2?family=Roboto', GOOGLE_BASE).isTracking,
+      ).toBe(false);
     });
 
     it('allows Google APIs', () => {
-      expect(isTrackingUrl('https://www.googleapis.com/customsearch/v1?q=test', GOOGLE_BASE).isTracking).toBe(false);
+      expect(
+        isTrackingUrl('https://www.googleapis.com/customsearch/v1?q=test', GOOGLE_BASE).isTracking,
+      ).toBe(false);
     });
 
     it('allows Google static assets', () => {
-      expect(isTrackingUrl('https://www.gstatic.com/images/branding/logo.png', GOOGLE_BASE).isTracking).toBe(false);
+      expect(
+        isTrackingUrl('https://www.gstatic.com/images/branding/logo.png', GOOGLE_BASE).isTracking,
+      ).toBe(false);
     });
 
     it('allows YouTube embeds', () => {
-      expect(isTrackingUrl('https://www.youtube.com/embed/abc123', GOOGLE_BASE).isTracking).toBe(false);
+      expect(isTrackingUrl('https://www.youtube.com/embed/abc123', GOOGLE_BASE).isTracking).toBe(
+        false,
+      );
     });
   });
 });
 
 describe('real-world: session replay detection on typical sites', () => {
   it('detects Hotjar on a site that loads it', () => {
-    const result = detectSessionReplayTools(
-      { hj: () => {}, hjSiteSettings: { site_id: 123 } },
-      ['https://static.hotjar.com/c/hotjar-123456.js?sv=7'],
-    );
+    const result = detectSessionReplayTools({ hj: () => {}, hjSiteSettings: { site_id: 123 } }, [
+      'https://static.hotjar.com/c/hotjar-123456.js?sv=7',
+    ]);
     expect(result).toContain('hotjar');
   });
 
   it('detects FullStory + Clarity combo (common on SaaS sites)', () => {
-    const result = detectSessionReplayTools(
-      { FS: { identify: () => {} }, clarity: () => {} },
-      [],
-    );
+    const result = detectSessionReplayTools({ FS: { identify: () => {} }, clarity: () => {} }, []);
     expect(result).toContain('fullstory');
     expect(result).toContain('clarity');
   });
 
   it('detects LogRocket loaded via CDN script only (no global yet)', () => {
-    const result = detectSessionReplayTools(
-      {},
-      ['https://cdn.logrocket.io/LogRocket.min.js'],
-    );
+    const result = detectSessionReplayTools({}, ['https://cdn.logrocket.io/LogRocket.min.js']);
     expect(result).toContain('logrocket');
   });
 
   it('detects nothing on a privacy-respecting site', () => {
-    const result = detectSessionReplayTools(
-      { React: {}, __NEXT_DATA__: {}, gtag: () => {} },
-      [
-        'https://cdn.example.com/app.js',
-        'https://unpkg.com/react@18/umd/react.production.min.js',
-      ],
-    );
+    const result = detectSessionReplayTools({ React: {}, __NEXT_DATA__: {}, gtag: () => {} }, [
+      'https://cdn.example.com/app.js',
+      'https://unpkg.com/react@18/umd/react.production.min.js',
+    ]);
     expect(result).toHaveLength(0);
   });
 });
@@ -334,11 +338,9 @@ describe('real-world: third-party ad/analytics ecosystem', () => {
     });
 
     it('blocks functional services when user opts in', () => {
-      const result = isTrackingUrl(
-        'https://o123.ingest.sentry.io/api/456/envelope/',
-        GOOGLE_BASE,
-        { blockFunctional: true },
-      );
+      const result = isTrackingUrl('https://o123.ingest.sentry.io/api/456/envelope/', GOOGLE_BASE, {
+        blockFunctional: true,
+      });
       expect(result.isTracking).toBe(true);
       expect(result.type).toBe('functional');
     });

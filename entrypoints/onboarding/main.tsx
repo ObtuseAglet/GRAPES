@@ -225,11 +225,10 @@ function OnboardingApp() {
         schemaVersion: 2,
       })
       .then((response: Record<string, unknown>) => {
-        if (
-          response?.ok &&
-          (response.data as Record<string, unknown>)
-        ) {
-          const data = response.data as { coreSettings?: { featureFlags?: { cssCustomization?: boolean } } };
+        if (response?.ok && (response.data as Record<string, unknown>)) {
+          const data = response.data as {
+            coreSettings?: { featureFlags?: { cssCustomization?: boolean } };
+          };
           setCssFeatureEnabled(!!data.coreSettings?.featureFlags?.cssCustomization);
         }
       })
@@ -268,7 +267,9 @@ function OnboardingApp() {
           <ModeSelectionStep
             selectedMode={selectedMode}
             onSelectMode={setSelectedMode}
-            onNext={() => { cssFeatureEnabled ? setStep(2) : handleFinish(); }}
+            onNext={() => {
+              cssFeatureEnabled ? setStep(2) : handleFinish();
+            }}
             onBack={() => setStep(0)}
           />
         )}

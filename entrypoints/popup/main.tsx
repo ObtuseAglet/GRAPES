@@ -263,14 +263,19 @@ function Header({ preferences, currentDomain }: HeaderProps) {
 
   return (
     <>
-      <header className="popup-header" role="banner">
+      <header className="popup-header">
         <div className="popup-title">
-          <span className="popup-logo" role="img" aria-label="GRAPES">🍇</span> GRAPES
+          <span className="popup-logo" role="img" aria-label="GRAPES">
+            🍇
+          </span>{' '}
+          GRAPES
         </div>
         <StatusBadge color={statusColor} text={statusText} />
       </header>
       <div className="domain-info">
-        <div className="domain-name" aria-label={`Current site: ${currentDomain || 'Unknown'}`}>{currentDomain || 'Unknown'}</div>
+        <div className="domain-name" title={`Current site: ${currentDomain || 'Unknown'}`}>
+          {currentDomain || 'Unknown'}
+        </div>
       </div>
     </>
   );
@@ -474,7 +479,10 @@ function SettingsTab({
     try {
       const logs = await browser.runtime.sendMessage({ type: 'GET_ALL_LOGS' });
       if (!logs || logs.length === 0) {
-        setSettingsStatus({ type: 'error', text: 'No logs to export. Enable logging and browse some sites first.' });
+        setSettingsStatus({
+          type: 'error',
+          text: 'No logs to export. Enable logging and browse some sites first.',
+        });
         return;
       }
       const json = JSON.stringify(logs, null, 2);
@@ -1018,9 +1026,7 @@ function StylesTab({
           🔍 Inspect Element
         </button>
       </div>
-      {inspectorStatus && (
-        <div className="setting-feedback error">{inspectorStatus}</div>
-      )}
+      {inspectorStatus && <div className="setting-feedback error">{inspectorStatus}</div>}
 
       <div className="btn-row">
         <button type="button" className="secondary-btn" onClick={handleReset}>
@@ -1210,7 +1216,9 @@ function PopupApp() {
           if (coreState?.ok) {
             const ageMs = Date.now() - (coreState.data.installState?.resetTimestamp || 0);
             setShowResetNotice(ageMs < 1000 * 60 * 60 * 24);
-            setCssCustomizationEnabled(!!coreState.data.coreSettings?.featureFlags?.cssCustomization);
+            setCssCustomizationEnabled(
+              !!coreState.data.coreSettings?.featureFlags?.cssCustomization,
+            );
           }
 
           const sharingStatus = await browser.runtime.sendMessage({
@@ -1482,7 +1490,11 @@ function PopupApp() {
         </div>
       )}
       <Header preferences={preferences} currentDomain={currentDomain} />
-      <TabNav currentTab={currentTab} onTabChange={setCurrentTab} cssCustomizationEnabled={cssCustomizationEnabled} />
+      <TabNav
+        currentTab={currentTab}
+        onTabChange={setCurrentTab}
+        cssCustomizationEnabled={cssCustomizationEnabled}
+      />
       {currentTab === 'now' && (
         <ActivityTab
           logEntry={logEntry}

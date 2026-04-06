@@ -17,10 +17,7 @@ export function isSuspiciousObservation(
   if (!options) return false;
 
   const isHighLevelTarget =
-    target === doc ||
-    target === doc.documentElement ||
-    target === doc.head ||
-    target === doc.body;
+    target === doc || target === doc.documentElement || target === doc.head || target === doc.body;
 
   const wouldCatchModifications =
     options.childList === true ||
