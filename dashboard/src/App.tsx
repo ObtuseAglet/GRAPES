@@ -4,12 +4,16 @@ import { Categories } from './pages/Categories';
 import { DomainView } from './pages/DomainView';
 import { Leaderboard } from './pages/Leaderboard';
 import { Overview } from './pages/Overview';
+import { ProtectionPolicy } from './pages/ProtectionPolicy';
+import { ReviewRequest } from './pages/ReviewRequest';
 
 type Page =
   | { id: 'overview' }
   | { id: 'leaderboard' }
   | { id: 'categories' }
   | { id: 'domain'; domain: string }
+  | { id: 'protection-policy' }
+  | { id: 'review-request' }
   | { id: 'about' };
 
 export function App() {
@@ -22,7 +26,7 @@ export function App() {
 
   return (
     <div className="app">
-      <nav className="nav">
+      <nav className="nav" role="navigation" aria-label="Main navigation">
         <div className="nav-brand" onClick={() => navigate({ id: 'overview' })}>
           <span className="nav-logo">🍇</span> GRAPES
         </div>
@@ -36,7 +40,7 @@ export function App() {
           </button>
           <button
             type="button"
-            className={`nav-link ${page.id === 'leaderboard' ? 'active' : ''}`}
+            className={`nav-link ${page.id === 'leaderboard' || page.id === 'domain' ? 'active' : ''}`}
             onClick={() => navigate({ id: 'leaderboard' })}
           >
             Leaderboard
@@ -47,6 +51,20 @@ export function App() {
             onClick={() => navigate({ id: 'categories' })}
           >
             Categories
+          </button>
+          <button
+            type="button"
+            className={`nav-link ${page.id === 'protection-policy' ? 'active' : ''}`}
+            onClick={() => navigate({ id: 'protection-policy' })}
+          >
+            Protection Policy
+          </button>
+          <button
+            type="button"
+            className={`nav-link ${page.id === 'review-request' ? 'active' : ''}`}
+            onClick={() => navigate({ id: 'review-request' })}
+          >
+            Request Review
           </button>
           <button
             type="button"
@@ -69,6 +87,10 @@ export function App() {
         {page.id === 'domain' && (
           <DomainView domain={page.domain} onBack={() => navigate({ id: 'leaderboard' })} />
         )}
+        {page.id === 'protection-policy' && (
+          <ProtectionPolicy onRequestReview={() => navigate({ id: 'review-request' })} />
+        )}
+        {page.id === 'review-request' && <ReviewRequest />}
         {page.id === 'about' && <About />}
       </main>
 

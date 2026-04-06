@@ -265,12 +265,17 @@ function Header({ preferences, currentDomain }: HeaderProps) {
     <>
       <header className="popup-header">
         <div className="popup-title">
-          <span className="popup-logo">🍇</span> GRAPES
+          <span className="popup-logo" role="img" aria-label="GRAPES">
+            🍇
+          </span>{' '}
+          GRAPES
         </div>
         <StatusBadge color={statusColor} text={statusText} />
       </header>
       <div className="domain-info">
-        <div className="domain-name">{currentDomain || 'Unknown'}</div>
+        <div className="domain-name" title={`Current site: ${currentDomain || 'Unknown'}`}>
+          {currentDomain || 'Unknown'}
+        </div>
       </div>
     </>
   );
@@ -280,22 +285,30 @@ function Header({ preferences, currentDomain }: HeaderProps) {
 interface TabNavProps {
   currentTab: string;
   onTabChange: (tab: string) => void;
+  cssCustomizationEnabled?: boolean;
 }
 
-function TabNav({ currentTab, onTabChange }: TabNavProps) {
+function TabNav({ currentTab, onTabChange, cssCustomizationEnabled }: TabNavProps) {
   const tabs = [
     { id: 'now', label: '🔬 Now' },
     { id: 'protect', label: '🛡 Protect' },
-    { id: 'edit', label: '🎨 Edit' },
+    ...(cssCustomizationEnabled ? [{ id: 'edit', label: '🎨 Edit' }] : []),
     { id: 'data', label: '📊 Data' },
   ];
 
+  // If current tab was removed (e.g. CSS flag turned off while on edit), fall back
+  if (!tabs.find((t) => t.id === currentTab)) {
+    onTabChange('now');
+  }
+
   return (
-    <div className="popup-tabs">
+    <div className="popup-tabs" role="tablist">
       {tabs.map((tab) => (
         <button
           key={tab.id}
           type="button"
+          role="tab"
+          aria-selected={currentTab === tab.id}
           className={`tab-btn ${currentTab === tab.id ? 'active' : ''}`}
           onClick={() => onTabChange(tab.id)}
         >
@@ -459,13 +472,17 @@ function SettingsTab({
     type: 'success' | 'error';
     text: string;
   } | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   async function handleExportLogs() {
     try {
       const logs = await browser.runtime.sendMessage({ type: 'GET_ALL_LOGS' });
       if (!logs || logs.length === 0) {
-        alert('No logs to export. Enable logging and browse some sites first.');
+        setSettingsStatus({
+          type: 'error',
+          text: 'No logs to export. Enable logging and browse some sites first.',
+        });
         return;
       }
       const json = JSON.stringify(logs, null, 2);
@@ -476,17 +493,21 @@ function SettingsTab({
       a.download = `grapes-logs-${new Date().toISOString().split('T')[0]}.json`;
       a.click();
       URL.revokeObjectURL(url);
+      setSettingsStatus({ type: 'success', text: 'Logs exported.' });
     } catch (e) {
       console.error('Export failed:', e);
-      alert('Failed to export logs');
+      setSettingsStatus({ type: 'error', text: 'Failed to export logs.' });
     }
   }
 
   async function handleClearLogs() {
-    if (confirm('Are you sure you want to clear all surveillance logs? This cannot be undone.')) {
-      await browser.runtime.sendMessage({ type: 'CLEAR_LOGS' });
-      alert('Logs cleared successfully');
+    if (!confirmClear) {
+      setConfirmClear(true);
+      return;
     }
+    await browser.runtime.sendMessage({ type: 'CLEAR_LOGS' });
+    setSettingsStatus({ type: 'success', text: 'Logs cleared.' });
+    setConfirmClear(false);
   }
 
   async function handleStealthTest() {
@@ -614,7 +635,7 @@ function SettingsTab({
             📥 Export Logs
           </button>
           <button type="button" className="secondary-btn danger" onClick={handleClearLogs}>
-            🗑️ Clear Logs
+            {confirmClear ? '⚠️ Confirm Clear' : '🗑️ Clear Logs'}
           </button>
         </div>
         <div className="setting-hint">Export logs as JSON for MongoDB import or analysis</div>
@@ -775,27 +796,27 @@ function StylesTab({
     }
   }
 
+  const [inspectorStatus, setInspectorStatus] = useState('');
+
   async function handleInspectElement() {
+    setInspectorStatus('');
     try {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
 
       if (!tab || !tab.id) {
-        window.alert('Unable to find the active tab to inspect.');
+        setInspectorStatus('Unable to find the active tab.');
         return;
       }
 
-      // Avoid sending messages to pages where content scripts cannot run.
       if (tab.url && !/^https?:/i.test(tab.url)) {
-        window.alert('The inspector cannot be used on this type of page.');
+        setInspectorStatus('Inspector cannot run on this page type.');
         return;
       }
 
       await browser.tabs.sendMessage(tab.id, { type: 'ACTIVATE_INSPECTOR' });
     } catch (error) {
-      // Handle cases where sendMessage rejects (e.g. no content script in the tab).
-      // eslint-disable-next-line no-console
       console.error('Failed to activate inspector', error);
-      window.alert('Unable to activate the inspector on this page.');
+      setInspectorStatus('Unable to activate inspector on this page.');
     }
   }
 
@@ -1005,6 +1026,7 @@ function StylesTab({
           🔍 Inspect Element
         </button>
       </div>
+      {inspectorStatus && <div className="setting-feedback error">{inspectorStatus}</div>}
 
       <div className="btn-row">
         <button type="button" className="secondary-btn" onClick={handleReset}>
@@ -1171,6 +1193,7 @@ function PopupApp() {
   const [contributionConsent, setContributionConsent] = useState(false);
   const [contributionEndpoint, setContributionEndpoint] = useState('');
   const [showResetNotice, setShowResetNotice] = useState(false);
+  const [cssCustomizationEnabled, setCssCustomizationEnabled] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -1193,6 +1216,9 @@ function PopupApp() {
           if (coreState?.ok) {
             const ageMs = Date.now() - (coreState.data.installState?.resetTimestamp || 0);
             setShowResetNotice(ageMs < 1000 * 60 * 60 * 24);
+            setCssCustomizationEnabled(
+              !!coreState.data.coreSettings?.featureFlags?.cssCustomization,
+            );
           }
 
           const sharingStatus = await browser.runtime.sendMessage({
@@ -1438,7 +1464,14 @@ function PopupApp() {
   }
 
   if (!preferences) {
-    return <div className="popup-container loading">Loading...</div>;
+    return (
+      <div className="popup-container loading">
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '28px', marginBottom: '8px' }}>🍇</div>
+          <div style={{ color: '#888', fontSize: '13px' }}>Loading...</div>
+        </div>
+      </div>
+    );
   }
 
   const override = preferences.siteSettings[currentDomain] || null;
@@ -1457,7 +1490,11 @@ function PopupApp() {
         </div>
       )}
       <Header preferences={preferences} currentDomain={currentDomain} />
-      <TabNav currentTab={currentTab} onTabChange={setCurrentTab} />
+      <TabNav
+        currentTab={currentTab}
+        onTabChange={setCurrentTab}
+        cssCustomizationEnabled={cssCustomizationEnabled}
+      />
       {currentTab === 'now' && (
         <ActivityTab
           logEntry={logEntry}
@@ -1491,7 +1528,7 @@ function PopupApp() {
           onEndpointChange={handleEndpointChange}
         />
       )}
-      {currentTab === 'edit' && (
+      {currentTab === 'edit' && cssCustomizationEnabled && (
         <StylesTab
           preferences={preferences}
           currentDomain={currentDomain}

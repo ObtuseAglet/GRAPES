@@ -4,10 +4,12 @@ import {
   getDomainDetail,
   getDomainLeaderboard,
   getOverviewStats,
+  getReviewRequests,
   insertReports,
+  insertReviewRequest,
 } from './db.js';
 import { rateLimit } from './rate-limit.js';
-import { validateReportBatch } from './validate.js';
+import { validateReportBatch, validateReviewRequest } from './validate.js';
 
 export const apiRouter = Router();
 
@@ -52,6 +54,29 @@ apiRouter.get('/stats/domains', (req, res) => {
 apiRouter.get('/stats/categories', (_req, res) => {
   const stats = getCategoryStats();
   res.json(stats);
+});
+
+// Submit a review request (for companies running functional services)
+apiRouter.post('/review-requests', rateLimit, (req, res) => {
+  const validation = validateReviewRequest(req.body);
+
+  if (!validation.ok) {
+    res.status(400).json({ error: validation.error });
+    return;
+  }
+
+  const result = insertReviewRequest(validation.request);
+  res.status(201).json({
+    id: result.id,
+    message: 'Review request submitted successfully. We will review it and respond to your email.',
+  });
+});
+
+// List review requests (for admin / public transparency)
+apiRouter.get('/review-requests', (req, res) => {
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const requests = getReviewRequests(status);
+  res.json(requests);
 });
 
 // Per-domain detail

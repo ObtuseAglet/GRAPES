@@ -16,7 +16,12 @@ export function GradeCircle({ threats, categories }: GradeCircleProps) {
   const grade = computeGrade(threats, categories);
 
   return (
-    <span className="grade-circle" style={{ background: grade.color }}>
+    <span
+      className="grade-circle"
+      style={{ background: grade.color }}
+      role="img"
+      aria-label={`Privacy grade: ${grade.letter}`}
+    >
       {grade.letter}
     </span>
   );

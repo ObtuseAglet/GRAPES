@@ -9,6 +9,9 @@
  *
  * Protection can be enabled/disabled via custom events from the content script.
  * Detection always runs regardless of protection status.
+ *
+ * Core detection / filtering logic is extracted into `core/stealth/` so that
+ * it can be unit-tested independently of the browser runtime.
  */
 
 export default defineContentScript({
@@ -1418,27 +1421,30 @@ export default defineContentScript({
     const detectedTrackingTypes: Set<string> = new Set();
     let trackingCount = 0;
 
-    // Known tracking domains and patterns
+    // Known tracking domains — surveillance trackers only.
+    // Error monitors (Sentry, Bugsnag, etc.), log aggregators (Loggly, Sumo),
+    // and support widgets (Intercom, Zendesk) are intentionally excluded.
+    // Blocking them breaks site error reporting without privacy benefit.
     const TRACKING_DOMAINS = [
-      // Analytics
+      // Google ad & analytics network
       'google-analytics.com',
       'googletagmanager.com',
       'doubleclick.net',
       'googlesyndication.com',
       'googleadservices.com',
-      // Facebook
+      // Facebook / Meta
       'facebook.com/tr',
       'facebook.net',
       'fbcdn.net',
-      // Twitter/X
+      // Twitter / X
       'analytics.twitter.com',
       't.co',
       'platform.twitter.com',
-      // Microsoft/Bing
+      // Microsoft / Bing ads
       'bat.bing.com',
       'clarity.ms',
       'browser.events.data.microsoft.com',
-      // Other major trackers
+      // Ad networks & retargeting
       'pixel.quantserve.com',
       'quantcast.com',
       'amazon-adsystem.com',
@@ -1453,6 +1459,7 @@ export default defineContentScript({
       'analytics.tiktok.com',
       'pinterest.com/ct',
       'ct.pinterest.com',
+      // Behavioral analytics (user-level tracking / profiling)
       'segment.io',
       'segment.com',
       'mixpanel.com',
@@ -1461,18 +1468,9 @@ export default defineContentScript({
       'hubspot.com',
       'hs-analytics.net',
       'hsforms.net',
-      'intercom.io',
-      'zendesk.com',
       'optimizely.com',
       'chartbeat.com',
       'scorecardresearch.com',
-      'newrelic.com',
-      'nr-data.net',
-      'sentry.io',
-      'bugsnag.com',
-      'rollbar.com',
-      'loggly.com',
-      'sumologic.com',
     ];
 
     // Patterns that indicate tracking pixels

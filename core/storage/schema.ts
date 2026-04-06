@@ -11,6 +11,7 @@ export interface CoreSettings {
     strictProtection: boolean;
     editorRules: boolean;
     sharingQueue: boolean;
+    cssCustomization: boolean;
   };
 }
 
@@ -76,6 +77,7 @@ export const DEFAULT_STORAGE_STATE_V2: StorageStateV2 = {
       strictProtection: false,
       editorRules: true,
       sharingQueue: true,
+      cssCustomization: false,
     },
   },
   sitePolicy: {},

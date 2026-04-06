@@ -504,7 +504,22 @@ export default defineContentScript({
         }
       }
       if (message.type === 'ACTIVATE_INSPECTOR') {
-        activateSelectorInspector();
+        // Inspector is a CSS customization tool — gated behind feature flag.
+        // Check flag before activating; fall through silently if disabled.
+        browser.runtime
+          .sendMessage({
+            type: 'CORE_GET_STATE',
+            requestId: `inspector-check-${Date.now()}`,
+            source: 'content',
+            timestamp: Date.now(),
+            schemaVersion: 2,
+          })
+          .then((response) => {
+            if (response?.ok && response.data?.coreSettings?.featureFlags?.cssCustomization) {
+              activateSelectorInspector();
+            }
+          })
+          .catch(() => {});
       }
       return;
     });
@@ -691,6 +706,11 @@ export default defineContentScript({
         .then((response) => {
           if (response?.ok && response.data) {
             const state = response.data;
+            // CSS customization is behind a feature flag — skip if disabled
+            if (!state.coreSettings?.featureFlags?.cssCustomization) {
+              removeCustomStyles();
+              return;
+            }
             const preferences = {
               globalMode: state.coreSettings.mode,
               siteSettings: state.sitePolicy,
@@ -706,16 +726,12 @@ export default defineContentScript({
             applyEditorRules(state.editorRules || []);
             return;
           }
-          return browser.storage.sync.get(['preferences']).then((result) => {
-            const preferences = (result.preferences || {}) as GrapesPreferences;
-            applyPreferredStyles(preferences);
-          });
+          // Legacy fallback — no feature flag available, skip styles
+          removeCustomStyles();
         })
         .catch(() => {
-          browser.storage.sync.get(['preferences']).then((result) => {
-            const preferences = (result.preferences || {}) as GrapesPreferences;
-            applyPreferredStyles(preferences);
-          });
+          // Core unavailable — skip styles
+          removeCustomStyles();
         });
     };
 
@@ -725,22 +741,58 @@ export default defineContentScript({
       applyWhenReady();
     }
 
-    // Listen for preference changes
+    // Listen for preference changes — only apply styles if CSS customization flag is on
     browser.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName === 'sync' && changes.preferences) {
-        const newPreferences = (changes.preferences.newValue || {}) as GrapesPreferences;
-        applyPreferredStyles(newPreferences);
+      if (areaName === 'sync' && changes.v2_state?.newValue) {
+        const nextState = changes.v2_state.newValue;
+        if (!nextState.coreSettings?.featureFlags?.cssCustomization) {
+          removeCustomStyles();
+          return;
+        }
+        if (nextState.editorRules) {
+          applyEditorRules(nextState.editorRules);
+        }
       }
-      if (areaName === 'sync' && changes.v2_state?.newValue?.editorRules) {
-        applyEditorRules(changes.v2_state.newValue.editorRules);
+      if (areaName === 'sync' && changes.preferences) {
+        // Legacy path — check flag via message before applying
+        browser.runtime
+          .sendMessage({
+            type: 'CORE_GET_STATE',
+            requestId: `style-change-${Date.now()}`,
+            source: 'content',
+            timestamp: Date.now(),
+            schemaVersion: 2,
+          })
+          .then((response) => {
+            if (response?.ok && response.data?.coreSettings?.featureFlags?.cssCustomization) {
+              const newPreferences = (changes.preferences?.newValue || {}) as GrapesPreferences;
+              applyPreferredStyles(newPreferences);
+            } else {
+              removeCustomStyles();
+            }
+          })
+          .catch(() => {});
       }
     });
 
     darkModeMediaQuery.addEventListener('change', () => {
-      browser.storage.sync.get(['preferences']).then((result) => {
-        const preferences = (result.preferences || {}) as GrapesPreferences;
-        applyPreferredStyles(preferences);
-      });
+      browser.runtime
+        .sendMessage({
+          type: 'CORE_GET_STATE',
+          requestId: `darkmode-change-${Date.now()}`,
+          source: 'content',
+          timestamp: Date.now(),
+          schemaVersion: 2,
+        })
+        .then((response) => {
+          if (response?.ok && response.data?.coreSettings?.featureFlags?.cssCustomization) {
+            browser.storage.sync.get(['preferences']).then((result) => {
+              const preferences = (result.preferences || {}) as GrapesPreferences;
+              applyPreferredStyles(preferences);
+            });
+          }
+        })
+        .catch(() => {});
     });
   },
 });
