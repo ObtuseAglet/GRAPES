@@ -29,17 +29,24 @@ export default defineContentScript({
     // Whether spoof mode is active (inject junk data into tracking APIs)
     let spoofModeActive = false;
     let spoofInstalled = false;
+    // Whether persona-based navigator overrides have been installed (ADR-002).
+    // Set once per page load to keep the identity stable.
+    let personaInstalled = false;
 
     // Listen for protection mode changes from content.ts (ISOLATED world)
     window.addEventListener('grapes-set-protection-mode', (event: Event) => {
       const customEvent = event as CustomEvent;
       try {
-        const { enabled, spoof } = JSON.parse(customEvent.detail);
+        const { enabled, spoof, persona } = JSON.parse(customEvent.detail);
         protectionEnabled = enabled;
         spoofModeActive = !!spoof;
         console.log(
           `[GRAPES Stealth] Protection mode set to: ${enabled ? 'enabled' : 'disabled'}${spoofModeActive ? ' (spoof)' : ''}`,
         );
+        if (enabled && persona && !personaInstalled) {
+          installPersonaOverrides(persona);
+          personaInstalled = true;
+        }
         if (spoofModeActive && !spoofInstalled) {
           installSpoofOverrides();
           spoofInstalled = true;
@@ -1824,23 +1831,122 @@ export default defineContentScript({
       return s;
     }
 
+    /**
+     * Override navigator.* properties to match the persona Chrome's DNR is
+     * rewriting on outgoing headers (ADR-002, Layer 2). Inconsistency between
+     * what headers say and what JS reads is itself a fingerprint signal, so
+     * these MUST stay aligned with the active persona.
+     */
+    interface PersonaShape {
+      userAgent: string;
+      navigatorLanguage: string;
+      navigatorLanguages?: string[];
+      navigatorPlatform: string;
+      userAgentData?: {
+        brands: { brand: string; version: string }[];
+        mobile: boolean;
+        platform: string;
+      } | null;
+    }
+
+    function installPersonaOverrides(persona: PersonaShape) {
+      try {
+        Object.defineProperty(Navigator.prototype, 'userAgent', {
+          get() {
+            return persona.userAgent;
+          },
+          configurable: true,
+        });
+      } catch {}
+      try {
+        Object.defineProperty(Navigator.prototype, 'language', {
+          get() {
+            return persona.navigatorLanguage;
+          },
+          configurable: true,
+        });
+      } catch {}
+      try {
+        const langs = persona.navigatorLanguages ?? [persona.navigatorLanguage];
+        Object.defineProperty(Navigator.prototype, 'languages', {
+          get() {
+            return langs;
+          },
+          configurable: true,
+        });
+      } catch {}
+      try {
+        Object.defineProperty(Navigator.prototype, 'platform', {
+          get() {
+            return persona.navigatorPlatform;
+          },
+          configurable: true,
+        });
+      } catch {}
+
+      if (persona.userAgentData) {
+        const data = persona.userAgentData;
+        const fakeUaData = {
+          brands: data.brands,
+          mobile: data.mobile,
+          platform: data.platform,
+          getHighEntropyValues(hints: string[]) {
+            const result: Record<string, unknown> = {
+              brands: data.brands,
+              mobile: data.mobile,
+              platform: data.platform,
+            };
+            for (const h of hints) {
+              if (h === 'platformVersion') result.platformVersion = '';
+              if (h === 'architecture') result.architecture = 'x86';
+              if (h === 'bitness') result.bitness = '64';
+              if (h === 'model') result.model = '';
+              if (h === 'uaFullVersion')
+                result.uaFullVersion = `${data.brands[0]?.version ?? ''}.0.0.0`;
+              if (h === 'fullVersionList') result.fullVersionList = data.brands;
+              if (h === 'wow64') result.wow64 = false;
+            }
+            return Promise.resolve(result);
+          },
+          toJSON() {
+            return { brands: data.brands, mobile: data.mobile, platform: data.platform };
+          },
+        };
+        try {
+          Object.defineProperty(Navigator.prototype, 'userAgentData', {
+            get() {
+              return fakeUaData;
+            },
+            configurable: true,
+          });
+        } catch {}
+      }
+
+      console.log(`[GRAPES] Persona overrides installed: ${persona.userAgent.slice(0, 60)}...`);
+    }
+
     function installSpoofOverrides() {
       const [sw, sh] = spoofPick(SPOOF_SCREENS);
       const tz = spoofPick(SPOOF_TZ);
-      const lang = spoofPick(SPOOF_LANG);
-      const plat = spoofPick(SPOOF_PLAT);
       const gpu = spoofPick(SPOOF_GPU);
       const cores = spoofPick([2, 4, 6, 8, 12, 16]);
       const mem = spoofPick([2, 4, 8, 16]);
 
-      // Navigator overrides
+      // Language and platform are owned by the persona override when one was
+      // installed (ADR-002 Layer 2). Only fall back to local pools if no
+      // persona is active so we don't double-define properties or contradict
+      // the headers Chrome's DNR is sending.
       const navProps: Record<string, unknown> = {
         hardwareConcurrency: cores,
         deviceMemory: mem,
-        language: lang,
-        languages: [lang, lang.split('-')[0]],
-        platform: plat,
       };
+      if (!personaInstalled) {
+        const lang = spoofPick(SPOOF_LANG);
+        const plat = spoofPick(SPOOF_PLAT);
+        navProps.language = lang;
+        navProps.languages = [lang, lang.split('-')[0]];
+        navProps.platform = plat;
+      }
       for (const [k, v] of Object.entries(navProps)) {
         try {
           Object.defineProperty(Navigator.prototype, k, {

@@ -15,6 +15,17 @@ import { MockSyncProvider } from '../core/sharing/provider';
 import { SharingQueueService } from '../core/sharing/queue';
 import { toSharedReport } from '../core/sharing/sanitizer';
 import {
+  buildHeaderRules,
+  getAllHeaderRuleIds,
+  type HeaderScrambleRule,
+} from '../core/stealth/header-scramble';
+import {
+  clearActivePersona,
+  getOrCreateActivePersona,
+  type SessionStorageLike,
+} from '../core/stealth/persona-session';
+import type { BrowserPersona } from '../core/stealth/ua-pool';
+import {
   DEFAULT_STORAGE_STATE_V2,
   fromLegacyPreferences,
   type StorageStateV2,
@@ -69,6 +80,86 @@ async function handleAutoFlush(): Promise<void> {
   const state = await sharingQueue.getState();
   if (!state.consent || state.queue.length < MIN_BATCH_SIZE) return;
   await sharingQueue.flushNow();
+}
+
+// ---------------------------------------------------------------------------
+// Header scrambling (ADR-002)
+// ---------------------------------------------------------------------------
+
+let activePersona: BrowserPersona | null = null;
+
+const sessionStorage: SessionStorageLike = {
+  async get(keys) {
+    const session = (browser.storage as unknown as { session?: typeof browser.storage.local })
+      .session;
+    const target = session ?? browser.storage.local;
+    return (await target.get(keys)) as Record<string, unknown>;
+  },
+  async set(items) {
+    const session = (browser.storage as unknown as { session?: typeof browser.storage.local })
+      .session;
+    const target = session ?? browser.storage.local;
+    await target.set(items);
+  },
+  async remove(keys) {
+    const session = (browser.storage as unknown as { session?: typeof browser.storage.local })
+      .session;
+    const target = session ?? browser.storage.local;
+    await target.remove(keys);
+  },
+};
+
+function dnrAvailable(): boolean {
+  return typeof browser !== 'undefined' && 'declarativeNetRequest' in browser;
+}
+
+async function clearHeaderRules(): Promise<void> {
+  if (!dnrAvailable()) return;
+  try {
+    await browser.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: getAllHeaderRuleIds(),
+    });
+  } catch (err) {
+    console.warn('[GRAPES] Failed to clear header rules:', err);
+  }
+}
+
+async function applyHeaderRules(rules: HeaderScrambleRule[]): Promise<void> {
+  if (!dnrAvailable()) return;
+  try {
+    await browser.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: getAllHeaderRuleIds(),
+      // chrome.declarativeNetRequest.Rule is a structural superset of our type
+      addRules: rules as unknown as chrome.declarativeNetRequest.Rule[],
+    });
+  } catch (err) {
+    console.warn('[GRAPES] Failed to apply header rules:', err);
+  }
+}
+
+async function syncHeaderScrambling(state: StorageStateV2): Promise<BrowserPersona | null> {
+  const mode = state.coreSettings.mode;
+  const persona = await getOrCreateActivePersona(mode, { storage: sessionStorage });
+  activePersona = persona;
+
+  if (!persona) {
+    await clearHeaderRules();
+    return null;
+  }
+
+  const excluded: string[] = [];
+  const endpoint = state.contribution?.endpoint;
+  if (endpoint) {
+    try {
+      excluded.push(new URL(endpoint).hostname);
+    } catch {
+      // ignore malformed endpoint
+    }
+  }
+
+  const rules = buildHeaderRules(persona, { excludedDomains: excluded });
+  await applyHeaderRules(rules);
+  return persona;
 }
 
 const tabSurveillance: Map<number, SurveillanceData> = new Map();
@@ -280,6 +371,12 @@ async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
     case 'CORE_SET_MODE': {
       const next = { ...state, coreSettings: { ...state.coreSettings, mode: request.mode } };
       await setState(next);
+      // Switching out of spoof drops the random session persona so re-entry
+      // gets a fresh identity rather than reusing the previous one.
+      if (state.coreSettings.mode === 'spoof' && request.mode !== 'spoof') {
+        await clearActivePersona(sessionStorage);
+      }
+      await syncHeaderScrambling(next);
       return { ok: true, data: { success: true } };
     }
     case 'CORE_SET_SITE_POLICY': {
@@ -370,8 +467,12 @@ async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
       const nextState = { ...state, contribution: nextContrib };
       await setState(nextState);
       httpProvider.setEndpoint(request.endpoint);
+      // Endpoint exclusions are baked into DNR rules — rebuild them.
+      await syncHeaderScrambling(nextState);
       return { ok: true, data: { success: true } };
     }
+    case 'CORE_GET_ACTIVE_PERSONA':
+      return { ok: true, data: { persona: activePersona } };
   }
 }
 
@@ -390,10 +491,13 @@ export default defineBackground(() => {
     if (state.contribution?.consentGiven) {
       void scheduleAutoFlush(state.contribution.uploadIntervalMinutes);
     }
+    void syncHeaderScrambling(state);
   });
 
   browser.runtime.onInstalled.addListener(() => {
-    void ensureV2State();
+    void ensureV2State().then((state) => {
+      void syncHeaderScrambling(state);
+    });
   });
 
   // Periodic auto-flush of queued reports

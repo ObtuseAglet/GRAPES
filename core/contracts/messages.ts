@@ -1,4 +1,5 @@
 import type { EditorRule } from '../../features/editor/rules';
+import type { BrowserPersona } from '../stealth/ua-pool';
 import type { StorageStateV2 } from '../storage/schema';
 import type {
   BusEnvelope,
@@ -25,7 +26,8 @@ export type CoreRequest =
   | (BusEnvelope & { type: 'CORE_QUEUE_REPORT'; report: SharedReport })
   | (BusEnvelope & { type: 'CORE_SET_CONTRIBUTION_CONSENT'; enabled: boolean })
   | (BusEnvelope & { type: 'CORE_GET_CONTRIBUTION_STATUS' })
-  | (BusEnvelope & { type: 'CORE_SET_CONTRIBUTION_ENDPOINT'; endpoint: string });
+  | (BusEnvelope & { type: 'CORE_SET_CONTRIBUTION_ENDPOINT'; endpoint: string })
+  | (BusEnvelope & { type: 'CORE_GET_ACTIVE_PERSONA' });
 
 export type CoreResponse =
   | Result<StorageStateV2>
@@ -33,4 +35,5 @@ export type CoreResponse =
   | Result<ThreatEvent[]>
   | Result<SharedReport[]>
   | Result<{ consent: boolean; queueLength: number; lastSyncAt: number | null }>
-  | Result<{ consentGiven: boolean; consentTimestamp: number; endpoint?: string }>;
+  | Result<{ consentGiven: boolean; consentTimestamp: number; endpoint?: string }>
+  | Result<{ persona: BrowserPersona | null }>;

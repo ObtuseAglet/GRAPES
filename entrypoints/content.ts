@@ -464,10 +464,14 @@ export default defineContentScript({
     const currentDomain = extractDomainFromHostname(window.location.hostname);
 
     // Helper to notify the MAIN world stealth script about protection mode
-    const notifyProtectionMode = (enabled: boolean, spoof: boolean = false) => {
+    const notifyProtectionMode = (
+      enabled: boolean,
+      spoof: boolean = false,
+      persona: unknown = null,
+    ) => {
       window.dispatchEvent(
         new CustomEvent('grapes-set-protection-mode', {
-          detail: JSON.stringify({ enabled, spoof }),
+          detail: JSON.stringify({ enabled, spoof, persona }),
         }),
       );
     };
@@ -477,14 +481,34 @@ export default defineContentScript({
         type: 'GET_PROTECTION_STATUS',
         domain: currentDomain,
       })
-      .then((status) => {
+      .then(async (status) => {
         if (status) {
           currentProtectionMode = status.mode;
           console.log(`[GRAPES] Protection mode for ${currentDomain}: ${currentProtectionMode}`);
 
-          // Notify the MAIN world stealth script whether protection should be enabled
           const protectionEnabled = status.mode === 'full' || status.mode === 'spoof';
-          notifyProtectionMode(protectionEnabled, status.mode === 'spoof');
+
+          // Pull the active header-scramble persona so the MAIN world can keep
+          // navigator.* consistent with the headers DNR is rewriting.
+          let persona: unknown = null;
+          if (protectionEnabled) {
+            try {
+              const personaResp = await browser.runtime.sendMessage({
+                type: 'CORE_GET_ACTIVE_PERSONA',
+                requestId: `persona-${Date.now()}`,
+                source: 'content',
+                timestamp: Date.now(),
+                schemaVersion: 2,
+              });
+              if (personaResp?.ok) {
+                persona = personaResp.data?.persona ?? null;
+              }
+            } catch (err) {
+              console.log('[GRAPES] Could not fetch active persona:', err);
+            }
+          }
+
+          notifyProtectionMode(protectionEnabled, status.mode === 'spoof', persona);
         }
       })
       .catch((err) => {
