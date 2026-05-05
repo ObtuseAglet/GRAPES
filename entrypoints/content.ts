@@ -645,6 +645,30 @@ export default defineContentScript({
       }
     });
 
+    // Listen for header-fingerprinting detection (ADR-002 Step 5)
+    window.addEventListener('grapes-header-fingerprinting-detected', (event: Event) => {
+      const customEvent = event as CustomEvent;
+      try {
+        const detail = JSON.parse(customEvent.detail);
+        console.log('[GRAPES] Header fingerprinting detected:', detail);
+
+        browser.runtime
+          .sendMessage({
+            type: 'HEADER_FINGERPRINTING_DETECTED',
+            data: detail,
+          })
+          .catch((err) => {
+            console.log('[GRAPES] Could not send message to background:', err);
+          });
+
+        handleDetection('header-fingerprint', () =>
+          getNotificationManager().showFingerprinting(detail),
+        );
+      } catch (e) {
+        console.error('[GRAPES] Error parsing header-fingerprinting event:', e);
+      }
+    });
+
     // Listen for visibility tracking detection
     window.addEventListener('grapes-visibility-tracking-detected', (event: Event) => {
       const customEvent = event as CustomEvent;

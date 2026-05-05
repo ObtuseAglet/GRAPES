@@ -45,7 +45,8 @@ export interface SurveillanceEvent {
     | 'session-replay'
     | 'fingerprinting'
     | 'visibility-tracking'
-    | 'tracking-pixel';
+    | 'tracking-pixel'
+    | 'header-fingerprinting';
   details: string[];
   timestamp: number;
   blocked: boolean;
@@ -58,5 +59,6 @@ export interface SurveillanceData {
   fingerprinting: string[];
   visibilityTracking: boolean;
   trackingPixels: string[];
+  headerFingerprinting: string[];
   timestamp: number;
 }

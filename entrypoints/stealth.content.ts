@@ -1849,80 +1849,115 @@ export default defineContentScript({
       } | null;
     }
 
-    function installPersonaOverrides(persona: PersonaShape) {
-      try {
-        Object.defineProperty(Navigator.prototype, 'userAgent', {
-          get() {
-            return persona.userAgent;
-          },
-          configurable: true,
-        });
-      } catch {}
-      try {
-        Object.defineProperty(Navigator.prototype, 'language', {
-          get() {
-            return persona.navigatorLanguage;
-          },
-          configurable: true,
-        });
-      } catch {}
-      try {
-        const langs = persona.navigatorLanguages ?? [persona.navigatorLanguage];
-        Object.defineProperty(Navigator.prototype, 'languages', {
-          get() {
-            return langs;
-          },
-          configurable: true,
-        });
-      } catch {}
-      try {
-        Object.defineProperty(Navigator.prototype, 'platform', {
-          get() {
-            return persona.navigatorPlatform;
-          },
-          configurable: true,
-        });
-      } catch {}
+    // Active persona is held in a closure variable so the navigator wrappers
+    // installed once at script init can pick up persona changes (and detect
+    // accesses) without redefining properties on every protection-mode event.
+    let activePersona: PersonaShape | null = null;
 
-      if (persona.userAgentData) {
-        const data = persona.userAgentData;
-        const fakeUaData = {
-          brands: data.brands,
-          mobile: data.mobile,
-          platform: data.platform,
-          getHighEntropyValues(hints: string[]) {
-            const result: Record<string, unknown> = {
-              brands: data.brands,
-              mobile: data.mobile,
-              platform: data.platform,
-            };
-            for (const h of hints) {
-              if (h === 'platformVersion') result.platformVersion = '';
-              if (h === 'architecture') result.architecture = 'x86';
-              if (h === 'bitness') result.bitness = '64';
-              if (h === 'model') result.model = '';
-              if (h === 'uaFullVersion')
-                result.uaFullVersion = `${data.brands[0]?.version ?? ''}.0.0.0`;
-              if (h === 'fullVersionList') result.fullVersionList = data.brands;
-              if (h === 'wow64') result.wow64 = false;
-            }
-            return Promise.resolve(result);
-          },
-          toJSON() {
-            return { brands: data.brands, mobile: data.mobile, platform: data.platform };
-          },
-        };
+    // ---- Header-fingerprinting detection (ADR-002 Step 5) ------------------
+    let hasAlertedHeaderFingerprinting = false;
+    const detectedHeaderProbes: Set<string> = new Set();
+
+    function notifyHeaderFingerprintingDetected(probe: string) {
+      detectedHeaderProbes.add(probe);
+      if (hasAlertedHeaderFingerprinting) return;
+      hasAlertedHeaderFingerprinting = true;
+      // Batch initial probes — sites typically read several Client Hints in
+      // quick succession during their fingerprinting routine.
+      setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent('grapes-header-fingerprinting-detected', {
+            detail: JSON.stringify({
+              probes: Array.from(detectedHeaderProbes),
+              url: window.location.hostname,
+            }),
+          }),
+        );
+      }, 100);
+    }
+
+    function buildFakeUaData(data: NonNullable<PersonaShape['userAgentData']>) {
+      return {
+        brands: data.brands,
+        mobile: data.mobile,
+        platform: data.platform,
+        getHighEntropyValues(hints: string[]) {
+          notifyHeaderFingerprintingDetected(`getHighEntropyValues:${hints.join(',')}`);
+          const result: Record<string, unknown> = {
+            brands: data.brands,
+            mobile: data.mobile,
+            platform: data.platform,
+          };
+          for (const h of hints) {
+            if (h === 'platformVersion') result.platformVersion = '';
+            if (h === 'architecture') result.architecture = 'x86';
+            if (h === 'bitness') result.bitness = '64';
+            if (h === 'model') result.model = '';
+            if (h === 'uaFullVersion')
+              result.uaFullVersion = `${data.brands[0]?.version ?? ''}.0.0.0`;
+            if (h === 'fullVersionList') result.fullVersionList = data.brands;
+            if (h === 'wow64') result.wow64 = false;
+          }
+          return Promise.resolve(result);
+        },
+        toJSON() {
+          return { brands: data.brands, mobile: data.mobile, platform: data.platform };
+        },
+      };
+    }
+
+    /**
+     * Install navigator wrappers ONCE at script init. Detection of
+     * userAgentData reads runs regardless of protection mode (so detection-only
+     * still surfaces header-fingerprinting attempts). Persona-driven values
+     * only kick in when activePersona is set.
+     */
+    function installNavigatorWrappers() {
+      const desc = (key: string) => Object.getOwnPropertyDescriptor(Navigator.prototype, key)?.get;
+
+      const origUa = desc('userAgent');
+      const origLang = desc('language');
+      const origLangs = desc('languages');
+      const origPlat = desc('platform');
+      const origUad = desc('userAgentData');
+
+      const define = (key: string, getter: (this: Navigator) => unknown) => {
         try {
-          Object.defineProperty(Navigator.prototype, 'userAgentData', {
-            get() {
-              return fakeUaData;
-            },
-            configurable: true,
-          });
+          Object.defineProperty(Navigator.prototype, key, { get: getter, configurable: true });
         } catch {}
-      }
+      };
 
-      console.log(`[GRAPES] Persona overrides installed: ${persona.userAgent.slice(0, 60)}...`);
+      define('userAgent', function () {
+        return activePersona ? activePersona.userAgent : origUa?.call(this);
+      });
+      define('language', function () {
+        return activePersona ? activePersona.navigatorLanguage : origLang?.call(this);
+      });
+      define('languages', function () {
+        if (activePersona) {
+          return activePersona.navigatorLanguages ?? [activePersona.navigatorLanguage];
+        }
+        return origLangs?.call(this);
+      });
+      define('platform', function () {
+        return activePersona ? activePersona.navigatorPlatform : origPlat?.call(this);
+      });
+      define('userAgentData', function () {
+        // Reading navigator.userAgentData is unambiguously fingerprinting —
+        // the API exists for that purpose. Always log the read.
+        notifyHeaderFingerprintingDetected('userAgentData-read');
+        if (activePersona?.userAgentData) {
+          return buildFakeUaData(activePersona.userAgentData);
+        }
+        return origUad?.call(this);
+      });
+    }
+
+    installNavigatorWrappers();
+
+    function installPersonaOverrides(persona: PersonaShape) {
+      activePersona = persona;
+      console.log(`[GRAPES] Persona active: ${persona.userAgent.slice(0, 60)}...`);
     }
 
     function installSpoofOverrides() {

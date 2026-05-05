@@ -25,6 +25,10 @@ export function normalizeLegacyDetectionType(messageType: string): {
       category: 'tracking-pixel',
       detector: 'network-tracker',
     },
+    HEADER_FINGERPRINTING_DETECTED: {
+      category: 'header-fingerprinting',
+      detector: 'header-probe',
+    },
   };
   return map[messageType] || null;
 }

@@ -231,6 +231,7 @@ function updateSurveillanceSummary(tabId: number, event: ThreatEvent): Surveilla
     fingerprinting: [],
     visibilityTracking: false,
     trackingPixels: [],
+    headerFingerprinting: [],
     timestamp: Date.now(),
   };
 
@@ -244,6 +245,11 @@ function updateSurveillanceSummary(tabId: number, event: ThreatEvent): Surveilla
   if (event.category === 'visibility-tracking') existing.visibilityTracking = true;
   if (event.category === 'tracking-pixel') {
     existing.trackingPixels = [...new Set([...existing.trackingPixels, ...event.evidence])];
+  }
+  if (event.category === 'header-fingerprinting') {
+    existing.headerFingerprinting = [
+      ...new Set([...existing.headerFingerprinting, ...event.evidence]),
+    ];
   }
   existing.timestamp = Date.now();
   tabSurveillance.set(tabId, existing);
@@ -517,7 +523,8 @@ export default defineBackground(() => {
         message.type === 'SESSION_REPLAY_DETECTED' ||
         message.type === 'FINGERPRINTING_DETECTED' ||
         message.type === 'VISIBILITY_TRACKING_DETECTED' ||
-        message.type === 'TRACKING_PIXEL_DETECTED') &&
+        message.type === 'TRACKING_PIXEL_DETECTED' ||
+        message.type === 'HEADER_FINGERPRINTING_DETECTED') &&
       sender.tab?.id &&
       sender.tab.url
     ) {
@@ -532,7 +539,8 @@ export default defineBackground(() => {
         }
 
         const evidence = message.data?.tools ||
-          message.data?.types || [message.data?.targetType || 'detected'];
+          message.data?.types ||
+          message.data?.probes || [message.data?.targetType || 'detected'];
         const event = buildEvent(
           tabId,
           tabUrl,
@@ -650,13 +658,15 @@ function updateBadgeForTab(tabId: number, data: SurveillanceData) {
   const hasObservation = data.mutationObserver;
   const hasVisibility = data.visibilityTracking;
   const hasTracking = data.trackingPixels.length > 0;
+  const hasHeaderFingerprinting = data.headerFingerprinting.length > 0;
 
   const threatCount =
     (hasFingerprinting ? 1 : 0) +
     (hasReplay ? 1 : 0) +
     (hasObservation ? 1 : 0) +
     (hasVisibility ? 1 : 0) +
-    (hasTracking ? 1 : 0);
+    (hasTracking ? 1 : 0) +
+    (hasHeaderFingerprinting ? 1 : 0);
 
   if (threatCount === 0) {
     clearBadgeForTab(tabId);
@@ -668,7 +678,7 @@ function updateBadgeForTab(tabId: number, data: SurveillanceData) {
   if (hasVisibility) color = '#3498db';
   if (hasTracking) color = '#e67e22';
   if (hasReplay) color = '#f39c12';
-  if (hasFingerprinting) color = '#9b59b6';
+  if (hasFingerprinting || hasHeaderFingerprinting) color = '#9b59b6';
   browser.action.setBadgeBackgroundColor({ color, tabId });
   browser.action.setBadgeTextColor({ color: '#ffffff', tabId });
 }

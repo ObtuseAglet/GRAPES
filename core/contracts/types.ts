@@ -8,14 +8,16 @@ export type ThreatCategory =
   | 'session-replay'
   | 'fingerprinting'
   | 'visibility-tracking'
-  | 'tracking-pixel';
+  | 'tracking-pixel'
+  | 'header-fingerprinting';
 
 export type ThreatDetector =
   | 'mutation-observer'
   | 'session-replay-signature'
   | 'fingerprint-api'
   | 'visibility-api'
-  | 'network-tracker';
+  | 'network-tracker'
+  | 'header-probe';
 
 export type ExtensionSource = 'background' | 'content' | 'popup' | 'onboarding' | 'stealth';
 
