@@ -8,6 +8,7 @@ const CATEGORY_META: Record<string, { label: string; color: string }> = {
   fingerprinting: { label: 'Fingerprinting', color: '#9b59b6' },
   'visibility-tracking': { label: 'Visibility Tracking', color: '#3498db' },
   'tracking-pixel': { label: 'Tracking Pixels', color: '#e67e22' },
+  'header-fingerprinting': { label: 'Header Fingerprinting', color: '#16a085' },
 };
 
 interface OverviewProps {

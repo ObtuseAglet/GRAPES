@@ -6,6 +6,7 @@ const VALID_CATEGORIES = new Set([
   'fingerprinting',
   'visibility-tracking',
   'tracking-pixel',
+  'header-fingerprinting',
 ]);
 
 const VALID_DETECTORS = new Set([
@@ -14,6 +15,7 @@ const VALID_DETECTORS = new Set([
   'fingerprint-api',
   'visibility-api',
   'network-tracker',
+  'header-probe',
 ]);
 
 const VALID_CONFIDENCE = new Set(['low', 'medium', 'high']);

@@ -27,6 +27,11 @@ const CATEGORY_INFO: Record<string, { icon: string; label: string; desc: string 
     label: 'Tracking Pixels',
     desc: 'Invisible images or scripts from third parties that build cross-site browsing profiles.',
   },
+  'header-fingerprinting': {
+    icon: '🪪',
+    label: 'Header Fingerprinting',
+    desc: 'Reading HTTP request headers and Client Hints (User-Agent, Sec-CH-UA, navigator.userAgentData) to identify your browser and device.',
+  },
 };
 
 export function Categories() {

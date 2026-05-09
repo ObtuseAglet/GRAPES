@@ -9,6 +9,7 @@ const CATEGORIES = [
   { value: 'fingerprinting', label: 'Fingerprinting' },
   { value: 'visibility-tracking', label: 'Visibility Tracking' },
   { value: 'tracking-pixel', label: 'Tracking Pixels' },
+  { value: 'header-fingerprinting', label: 'Header Fingerprinting' },
 ];
 
 interface LeaderboardProps {

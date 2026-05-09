@@ -9,6 +9,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   fingerprinting: '#9b59b6',
   'visibility-tracking': '#3498db',
   'tracking-pixel': '#e67e22',
+  'header-fingerprinting': '#16a085',
 };
 
 interface DomainViewProps {

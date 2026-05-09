@@ -92,6 +92,23 @@ describe('validateReportBatch', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('accepts header-fingerprinting category with header-probe detector', () => {
+    const result = validateReportBatch({
+      reports: [
+        makeReport({
+          category: 'header-fingerprinting',
+          detector: 'header-probe',
+          evidence: ['userAgentData-read', 'getHighEntropyValues:platformVersion,architecture'],
+        }),
+      ],
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.reports[0].category).toBe('header-fingerprinting');
+      expect(result.reports[0].detector).toBe('header-probe');
+    }
+  });
+
   it('truncates evidence strings to 80 chars', () => {
     const result = validateReportBatch({
       reports: [makeReport({ evidence: ['a'.repeat(200)] })],
