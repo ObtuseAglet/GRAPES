@@ -15,9 +15,13 @@ import { MockSyncProvider } from '../core/sharing/provider';
 import { SharingQueueService } from '../core/sharing/queue';
 import { toSharedReport } from '../core/sharing/sanitizer';
 import {
+  applyHeaderOps,
+  buildHeaderOps,
   buildHeaderRules,
   getAllHeaderRuleIds,
+  type HeaderOp,
   type HeaderScrambleRule,
+  type RawHeader,
 } from '../core/stealth/header-scramble';
 import {
   clearActivePersona,
@@ -113,6 +117,28 @@ function dnrAvailable(): boolean {
   return typeof browser !== 'undefined' && 'declarativeNetRequest' in browser;
 }
 
+interface BlockingWebRequest {
+  onBeforeSendHeaders: {
+    addListener(
+      listener: (details: {
+        requestHeaders?: RawHeader[];
+        url: string;
+      }) => { requestHeaders: RawHeader[] } | undefined,
+      filter: { urls: string[] },
+      extraInfoSpec: string[],
+    ): void;
+    removeListener(listener: unknown): void;
+    hasListener(listener: unknown): boolean;
+  };
+}
+
+function webRequestBlockingAvailable(): BlockingWebRequest | null {
+  if (typeof browser === 'undefined') return null;
+  const wr = (browser as unknown as { webRequest?: BlockingWebRequest }).webRequest;
+  if (!wr || typeof wr.onBeforeSendHeaders?.addListener !== 'function') return null;
+  return wr;
+}
+
 async function clearHeaderRules(): Promise<void> {
   if (!dnrAvailable()) return;
   try {
@@ -137,15 +163,58 @@ async function applyHeaderRules(rules: HeaderScrambleRule[]): Promise<void> {
   }
 }
 
+// ---- Firefox webRequest path (ADR-002 Step 6) ---------------------------
+//
+// Firefox does not implement Chrome's modifyHeaders DNR action under MV3, so
+// we fall back to blocking webRequest, which Firefox MV3 still supports.
+// One listener per worker; we rebuild the captured ops + exclusion set on
+// every mode/endpoint change.
+
+let webRequestListener:
+  | ((details: {
+      requestHeaders?: RawHeader[];
+      url: string;
+    }) => { requestHeaders: RawHeader[] } | undefined)
+  | null = null;
+
+function clearWebRequestListener(wr: BlockingWebRequest): void {
+  if (webRequestListener && wr.onBeforeSendHeaders.hasListener(webRequestListener)) {
+    wr.onBeforeSendHeaders.removeListener(webRequestListener);
+  }
+  webRequestListener = null;
+}
+
+function installWebRequestListener(
+  wr: BlockingWebRequest,
+  ops: HeaderOp[],
+  excludedDomains: readonly string[],
+): void {
+  clearWebRequestListener(wr);
+  const excludedSet = new Set(excludedDomains.map((d) => d.toLowerCase()));
+
+  webRequestListener = (details) => {
+    if (!details.requestHeaders) return;
+    if (excludedSet.size > 0) {
+      try {
+        const host = new URL(details.url).hostname.toLowerCase();
+        if (excludedSet.has(host)) return;
+      } catch {
+        // unparseable url — fall through and modify
+      }
+    }
+    return { requestHeaders: applyHeaderOps(details.requestHeaders, ops) };
+  };
+
+  wr.onBeforeSendHeaders.addListener(webRequestListener, { urls: ['<all_urls>'] }, [
+    'blocking',
+    'requestHeaders',
+  ]);
+}
+
 async function syncHeaderScrambling(state: StorageStateV2): Promise<BrowserPersona | null> {
   const mode = state.coreSettings.mode;
   const persona = await getOrCreateActivePersona(mode, { storage: sessionStorage });
   activePersona = persona;
-
-  if (!persona) {
-    await clearHeaderRules();
-    return null;
-  }
 
   const excluded: string[] = [];
   const endpoint = state.contribution?.endpoint;
@@ -157,8 +226,20 @@ async function syncHeaderScrambling(state: StorageStateV2): Promise<BrowserPerso
     }
   }
 
-  const rules = buildHeaderRules(persona, { excludedDomains: excluded });
-  await applyHeaderRules(rules);
+  const wr = webRequestBlockingAvailable();
+
+  if (!persona) {
+    await clearHeaderRules();
+    if (wr) clearWebRequestListener(wr);
+    return null;
+  }
+
+  if (dnrAvailable()) {
+    const rules = buildHeaderRules(persona, { excludedDomains: excluded });
+    await applyHeaderRules(rules);
+  } else if (wr) {
+    installWebRequestListener(wr, buildHeaderOps(persona), excluded);
+  }
   return persona;
 }
 

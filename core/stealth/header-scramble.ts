@@ -73,10 +73,7 @@ export interface BuildHeaderRulesOptions {
   excludedDomains?: readonly string[];
 }
 
-export function buildHeaderRules(
-  persona: BrowserPersona,
-  options: BuildHeaderRulesOptions = {},
-): HeaderScrambleRule[] {
+export function buildHeaderOps(persona: BrowserPersona): HeaderOp[] {
   const ops: HeaderOp[] = [
     { header: 'user-agent', operation: 'set', value: persona.userAgent },
     { header: 'accept-language', operation: 'set', value: persona.acceptLanguage },
@@ -113,6 +110,14 @@ export function buildHeaderRules(
     ops.push({ header: 'sec-ch-ua-mobile', operation: 'remove' });
   }
 
+  return ops;
+}
+
+export function buildHeaderRules(
+  persona: BrowserPersona,
+  options: BuildHeaderRulesOptions = {},
+): HeaderScrambleRule[] {
+  const ops = buildHeaderOps(persona);
   const excluded = options.excludedDomains?.filter((d) => d.length > 0) ?? [];
 
   const rule: HeaderScrambleRule = {
@@ -127,6 +132,38 @@ export function buildHeaderRules(
   };
 
   return [rule];
+}
+
+/**
+ * Apply a list of header operations to a Firefox-style webRequest header
+ * array. Used by the Firefox port (browser.webRequest.onBeforeSendHeaders),
+ * since Firefox does not implement Chrome's declarativeNetRequest header
+ * modifications under MV3.
+ *
+ * Header name comparisons are case-insensitive — webRequest preserves the
+ * site's original casing, but operations are keyed on the canonical lowercase
+ * name to stay aligned with the DNR rule generator above.
+ */
+export interface RawHeader {
+  name: string;
+  value?: string;
+  binaryValue?: number[];
+}
+
+export function applyHeaderOps(headers: RawHeader[], ops: readonly HeaderOp[]): RawHeader[] {
+  // Strip any header that an op operates on so set/remove behave consistently.
+  const opsByLower = new Map<string, HeaderOp>();
+  for (const op of ops) opsByLower.set(op.header.toLowerCase(), op);
+
+  const next: RawHeader[] = headers.filter((h) => !opsByLower.has(h.name.toLowerCase()));
+
+  for (const op of ops) {
+    if (op.operation === 'set') {
+      next.push({ name: op.header, value: op.value });
+    }
+    // 'remove' is implicit — the filter above already dropped it.
+  }
+  return next;
 }
 
 /**

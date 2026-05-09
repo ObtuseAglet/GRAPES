@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyHeaderOps,
+  buildHeaderOps,
   buildHeaderRules,
   getAllHeaderRuleIds,
   HEADER_RULE_ID_MAX,
   HEADER_RULE_ID_MIN,
   HEADER_RULE_PRIORITY,
+  type RawHeader,
 } from './header-scramble';
 import { getNormalizedPersona, PERSONAS } from './ua-pool';
 
@@ -134,6 +137,79 @@ describe('buildHeaderRules', () => {
     expect(headers).not.toContain('origin');
     expect(headers).not.toContain('content-type');
     expect(headers).not.toContain('accept-encoding');
+  });
+});
+
+describe('applyHeaderOps (Firefox webRequest path)', () => {
+  it('replaces an existing header with the persona value (case-insensitive)', () => {
+    const headers: RawHeader[] = [
+      { name: 'Host', value: 'example.com' },
+      { name: 'User-Agent', value: 'Original/1.0' },
+      { name: 'Accept-Language', value: 'fr-CA' },
+    ];
+    const ops = buildHeaderOps(CHROME_PERSONA);
+    const next = applyHeaderOps(headers, ops);
+
+    const ua = next.find((h) => h.name.toLowerCase() === 'user-agent');
+    const al = next.find((h) => h.name.toLowerCase() === 'accept-language');
+    expect(ua?.value).toBe(CHROME_PERSONA.userAgent);
+    expect(al?.value).toBe(CHROME_PERSONA.acceptLanguage);
+  });
+
+  it('removes DNT and Sec-GPC from the outgoing headers', () => {
+    const headers: RawHeader[] = [
+      { name: 'DNT', value: '1' },
+      { name: 'Sec-GPC', value: '1' },
+      { name: 'Accept', value: 'text/html' },
+    ];
+    const next = applyHeaderOps(headers, buildHeaderOps(CHROME_PERSONA));
+    const names = next.map((h) => h.name.toLowerCase());
+    expect(names).not.toContain('dnt');
+    expect(names).not.toContain('sec-gpc');
+    expect(names).toContain('accept');
+  });
+
+  it('does not duplicate headers when persona-overridden ones already exist', () => {
+    const headers: RawHeader[] = [
+      { name: 'user-agent', value: 'Original/1.0' },
+      { name: 'user-agent', value: 'AlsoOriginal/1.0' },
+    ];
+    const next = applyHeaderOps(headers, buildHeaderOps(CHROME_PERSONA));
+    const uas = next.filter((h) => h.name.toLowerCase() === 'user-agent');
+    expect(uas).toHaveLength(1);
+    expect(uas[0].value).toBe(CHROME_PERSONA.userAgent);
+  });
+
+  it('preserves headers we do not touch (Cookie, Authorization, Content-Type)', () => {
+    const headers: RawHeader[] = [
+      { name: 'Cookie', value: 'session=abc' },
+      { name: 'Authorization', value: 'Bearer xyz' },
+      { name: 'Content-Type', value: 'application/json' },
+      { name: 'User-Agent', value: 'old' },
+    ];
+    const next = applyHeaderOps(headers, buildHeaderOps(CHROME_PERSONA));
+    const byLower = new Map(next.map((h) => [h.name.toLowerCase(), h.value]));
+    expect(byLower.get('cookie')).toBe('session=abc');
+    expect(byLower.get('authorization')).toBe('Bearer xyz');
+    expect(byLower.get('content-type')).toBe('application/json');
+  });
+
+  it('strips Sec-CH-UA family headers entirely for non-Chromium personas', () => {
+    const headers: RawHeader[] = [
+      { name: 'Sec-CH-UA', value: '"Chromium";v="100"' },
+      { name: 'Sec-CH-UA-Platform', value: '"Windows"' },
+      { name: 'Sec-CH-UA-Mobile', value: '?0' },
+      { name: 'User-Agent', value: 'old' },
+    ];
+    const next = applyHeaderOps(headers, buildHeaderOps(FIREFOX_PERSONA));
+    const names = next.map((h) => h.name.toLowerCase());
+    expect(names).not.toContain('sec-ch-ua');
+    expect(names).not.toContain('sec-ch-ua-platform');
+    expect(names).not.toContain('sec-ch-ua-mobile');
+    // Firefox persona's UA should still be installed.
+    expect(next.find((h) => h.name.toLowerCase() === 'user-agent')?.value).toBe(
+      FIREFOX_PERSONA.userAgent,
+    );
   });
 });
 
