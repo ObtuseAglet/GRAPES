@@ -1,4 +1,4 @@
-import type { SharedReport, ThreatEvent } from '../contracts/types';
+import { SCHEMA_VERSION, type ContributionReport, type ThreatEvent } from '../contracts/types';
 
 function sanitizeEvidence(evidence: string[]): string[] {
   return (
@@ -24,9 +24,18 @@ function roundToDay(ts: number): number {
   return d.getTime();
 }
 
-export function toSharedReport(event: ThreatEvent): SharedReport {
+function toClaimKey(event: ThreatEvent): string {
+  return `${event.domain}:${event.category}:${event.detector}`;
+}
+
+export function toContributionReport(
+  event: ThreatEvent,
+  installationId: string,
+): ContributionReport {
   return {
     id: event.id,
+    installationId,
+    claimKey: toClaimKey(event),
     // Only domain — never the full URL
     domain: event.domain,
     category: event.category,
@@ -35,8 +44,8 @@ export function toSharedReport(event: ThreatEvent): SharedReport {
     blocked: event.blocked,
     mode: event.mode,
     // Rounded to UTC day for k-anonymity
-    ts: roundToDay(event.ts),
+    observedDay: roundToDay(event.ts),
     evidence: sanitizeEvidence(event.evidence),
-    clientSchemaVersion: 2,
+    clientSchemaVersion: SCHEMA_VERSION,
   };
 }

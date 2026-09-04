@@ -11,13 +11,14 @@ import { ThreatLogStore } from '../core/logging/log-store';
 import { extractBaseDomain } from '../core/services/domain';
 import { getProtectionStatusForDomain } from '../core/services/policy';
 import { HttpSyncProvider } from '../core/sharing/http-provider';
-import { MockSyncProvider } from '../core/sharing/provider';
-import { SharingQueueService } from '../core/sharing/queue';
-import { toSharedReport } from '../core/sharing/sanitizer';
+import { MockContributionProvider } from '../core/sharing/provider';
+import { ContributionQueueService } from '../core/sharing/queue';
+import { toContributionReport } from '../core/sharing/sanitizer';
 import {
-  DEFAULT_STORAGE_STATE_V2,
+  createInstallationProfile,
+  DEFAULT_STORAGE_STATE,
   fromLegacyPreferences,
-  type StorageStateV2,
+  type StorageState,
   toLegacyPreferences,
 } from '../core/storage/schema';
 import type {
@@ -27,28 +28,30 @@ import type {
   SurveillanceLogEntry,
 } from '../lib/types';
 
-const STATE_KEY = 'v2_state';
-const INSTALL_MARKER_KEY = 'v2_install_state';
+const STATE_KEY = 'v3_state';
+const INSTALL_MARKER_KEY = 'v3_install_state';
 const LEGACY_LOGS_KEY = 'surveillanceLogs';
 
 const logStore = new ThreatLogStore();
-const mockProvider = new MockSyncProvider();
+const mockProvider = new MockContributionProvider();
 const httpProvider = new HttpSyncProvider();
-let sharingQueue = new SharingQueueService(mockProvider);
+let contributionQueue = new ContributionQueueService(mockProvider);
 
 /**
- * Switch the sharing queue between mock (local-only) and HTTP provider
+ * Switch the contribution queue between mock (local-only) and HTTP provider
  * based on contribution consent state.
  */
 const FLUSH_ALARM_NAME = 'grapes-flush-queue';
 const DEFAULT_FLUSH_INTERVAL_MIN = 60;
 const MIN_BATCH_SIZE = 5;
 
-function updateSharingProvider(contributionEnabled: boolean, endpoint?: string): void {
+function updateContributionProvider(contributionEnabled: boolean, endpoint?: string): void {
   if (endpoint) {
     httpProvider.setEndpoint(endpoint);
   }
-  sharingQueue = new SharingQueueService(contributionEnabled ? httpProvider : mockProvider);
+  contributionQueue = new ContributionQueueService(
+    contributionEnabled ? httpProvider : mockProvider,
+  );
 }
 
 /**
@@ -66,34 +69,42 @@ async function scheduleAutoFlush(intervalMinutes?: number): Promise<void> {
 }
 
 async function handleAutoFlush(): Promise<void> {
-  const state = await sharingQueue.getState();
+  const state = await contributionQueue.getState();
   if (!state.consent || state.queue.length < MIN_BATCH_SIZE) return;
-  await sharingQueue.flushNow();
+  await contributionQueue.flushNow();
 }
 
 const tabSurveillance: Map<number, SurveillanceData> = new Map();
 const tabLogEntries: Map<number, SurveillanceLogEntry> = new Map();
 
-async function getState(): Promise<StorageStateV2> {
+async function getState(): Promise<StorageState> {
   const result = await browser.storage.sync.get([STATE_KEY]);
-  return (result[STATE_KEY] as StorageStateV2 | undefined) || DEFAULT_STORAGE_STATE_V2;
+  return (result[STATE_KEY] as StorageState | undefined) || DEFAULT_STORAGE_STATE;
 }
 
-async function setState(state: StorageStateV2): Promise<void> {
+async function setState(state: StorageState): Promise<void> {
   await browser.storage.sync.set({ [STATE_KEY]: state });
 }
 
-async function ensureV2State(): Promise<StorageStateV2> {
+function detectBrowserFamily(): 'chromium' | 'firefox' | 'unknown' {
+  const userAgent = globalThis.navigator?.userAgent || '';
+  if (userAgent.includes('Firefox')) return 'firefox';
+  if (userAgent.includes('Chrome') || userAgent.includes('Edg/')) return 'chromium';
+  return 'unknown';
+}
+
+async function ensureCoreState(): Promise<StorageState> {
   const installMarker = await browser.storage.local.get([INSTALL_MARKER_KEY]);
   const marker = installMarker[INSTALL_MARKER_KEY] as
     | { schemaVersion: number; hardResetApplied: boolean }
     | undefined;
 
   if (!marker?.hardResetApplied || marker.schemaVersion !== SCHEMA_VERSION) {
-    await browser.storage.sync.clear();
-    await browser.storage.local.clear();
-    const fresh: StorageStateV2 = {
-      ...DEFAULT_STORAGE_STATE_V2,
+    const fresh: StorageState = {
+      ...DEFAULT_STORAGE_STATE,
+      installation: createInstallationProfile({
+        browserFamily: detectBrowserFamily(),
+      }),
       installState: {
         schemaVersion: SCHEMA_VERSION,
         hardResetApplied: true,
@@ -112,14 +123,19 @@ async function ensureV2State(): Promise<StorageStateV2> {
 
   const state = await getState();
   if (state.coreSettings.schemaVersion !== SCHEMA_VERSION) {
-    const upgraded: StorageStateV2 = {
-      ...DEFAULT_STORAGE_STATE_V2,
+    const upgraded: StorageState = {
+      ...DEFAULT_STORAGE_STATE,
       ...state,
       coreSettings: {
-        ...DEFAULT_STORAGE_STATE_V2.coreSettings,
+        ...DEFAULT_STORAGE_STATE.coreSettings,
         ...state.coreSettings,
         schemaVersion: SCHEMA_VERSION,
       },
+      installation: state.installation?.installationId
+        ? state.installation
+        : createInstallationProfile({
+            browserFamily: detectBrowserFamily(),
+          }),
       installState: {
         schemaVersion: SCHEMA_VERSION,
         hardResetApplied: true,
@@ -269,7 +285,7 @@ async function processThreatEvent(event: ThreatEvent): Promise<void> {
     await appendLegacyLog(event);
   }
 
-  await sharingQueue.enqueue(toSharedReport(event));
+  await contributionQueue.enqueue(toContributionReport(event, state.installation.installationId));
 }
 
 async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
@@ -306,39 +322,11 @@ async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
       await logStore.clearPersistent();
       await browser.storage.local.remove([LEGACY_LOGS_KEY]);
       return { ok: true, data: { success: true } };
-    case 'CORE_SET_EDITOR_RULES': {
-      const next = { ...state, editorRules: request.rules };
-      await setState(next);
-      return { ok: true, data: { success: true } };
-    }
-    case 'CORE_SET_SHARING_CONSENT': {
-      const sharing = await sharingQueue.setConsent(request.enabled);
-      const next = { ...state, sharing: { ...state.sharing, ...sharing } };
-      await setState(next);
-      return { ok: true, data: { success: true } };
-    }
-    case 'CORE_FLUSH_SHARING_QUEUE': {
-      const sharing = await sharingQueue.flushNow();
-      const next = { ...state, sharing: { ...state.sharing, ...sharing } };
-      await setState(next);
-      return { ok: true, data: { success: true } };
-    }
-    case 'CORE_GET_SHARING_STATUS': {
-      const sharing = await sharingQueue.getState();
-      return {
-        ok: true,
-        data: {
-          consent: sharing.consent,
-          queueLength: sharing.queue.length,
-          lastSyncAt: sharing.lastSyncAt,
-        },
-      };
-    }
     case 'CORE_REPORT_THREAT':
       await processThreatEvent(request.event);
       return { ok: true, data: { success: true } };
-    case 'CORE_QUEUE_REPORT':
-      await sharingQueue.enqueue(request.report);
+    case 'CORE_QUEUE_CONTRIBUTION':
+      await contributionQueue.enqueue(request.report);
       return { ok: true, data: { success: true } };
     case 'CORE_SET_CONTRIBUTION_CONSENT': {
       const nextContrib = {
@@ -348,7 +336,8 @@ async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
       };
       const nextState = { ...state, contribution: nextContrib };
       await setState(nextState);
-      updateSharingProvider(request.enabled, nextContrib.endpoint);
+      await contributionQueue.setConsent(request.enabled);
+      updateContributionProvider(request.enabled, nextContrib.endpoint);
       if (request.enabled) {
         void scheduleAutoFlush(nextContrib.uploadIntervalMinutes);
       } else {
@@ -356,15 +345,24 @@ async function handleCoreRequest(request: CoreRequest): Promise<CoreResponse> {
       }
       return { ok: true, data: { success: true } };
     }
+    case 'CORE_FLUSH_CONTRIBUTION_QUEUE':
+      await contributionQueue.flushNow();
+      return { ok: true, data: { success: true } };
     case 'CORE_GET_CONTRIBUTION_STATUS':
-      return {
-        ok: true,
-        data: {
-          consentGiven: state.contribution.consentGiven,
-          consentTimestamp: state.contribution.consentTimestamp,
-          endpoint: state.contribution.endpoint,
-        },
-      };
+      {
+        const queueState = await contributionQueue.getState();
+        return {
+          ok: true,
+          data: {
+            installationId: state.installation.installationId,
+            consentGiven: state.contribution.consentGiven,
+            consentTimestamp: state.contribution.consentTimestamp,
+            endpoint: state.contribution.endpoint,
+            queueLength: queueState.queue.length,
+            lastSyncAt: queueState.lastSyncAt,
+          },
+        };
+      }
     case 'CORE_SET_CONTRIBUTION_ENDPOINT': {
       const nextContrib = { ...state.contribution, endpoint: request.endpoint };
       const nextState = { ...state, contribution: nextContrib };
@@ -385,15 +383,18 @@ function createEnvelope() {
 }
 
 export default defineBackground(() => {
-  void ensureV2State().then((state) => {
-    updateSharingProvider(state.contribution?.consentGiven ?? false, state.contribution?.endpoint);
+  void ensureCoreState().then((state) => {
+    updateContributionProvider(
+      state.contribution?.consentGiven ?? false,
+      state.contribution?.endpoint,
+    );
     if (state.contribution?.consentGiven) {
       void scheduleAutoFlush(state.contribution.uploadIntervalMinutes);
     }
   });
 
   browser.runtime.onInstalled.addListener(() => {
-    void ensureV2State();
+    void ensureCoreState();
   });
 
   // Periodic auto-flush of queued reports

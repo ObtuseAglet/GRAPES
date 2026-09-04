@@ -1,10 +1,10 @@
-import type { EditorRule } from '../../features/editor/rules';
-import type { StorageStateV2 } from '../storage/schema';
+import type { StorageState } from '../storage/schema';
 import type {
   BusEnvelope,
+  ContributionReport,
+  ContributionStatus,
   ProtectionMode,
   Result,
-  SharedReport,
   SitePolicy,
   ThreatEvent,
 } from './types';
@@ -17,20 +17,16 @@ export type CoreRequest =
   | (BusEnvelope & { type: 'CORE_GET_TAB_THREATS'; tabId: number })
   | (BusEnvelope & { type: 'CORE_GET_LOGS' })
   | (BusEnvelope & { type: 'CORE_CLEAR_LOGS' })
-  | (BusEnvelope & { type: 'CORE_SET_EDITOR_RULES'; rules: EditorRule[] })
-  | (BusEnvelope & { type: 'CORE_SET_SHARING_CONSENT'; enabled: boolean })
-  | (BusEnvelope & { type: 'CORE_FLUSH_SHARING_QUEUE' })
-  | (BusEnvelope & { type: 'CORE_GET_SHARING_STATUS' })
   | (BusEnvelope & { type: 'CORE_REPORT_THREAT'; event: ThreatEvent })
-  | (BusEnvelope & { type: 'CORE_QUEUE_REPORT'; report: SharedReport })
+  | (BusEnvelope & { type: 'CORE_QUEUE_CONTRIBUTION'; report: ContributionReport })
   | (BusEnvelope & { type: 'CORE_SET_CONTRIBUTION_CONSENT'; enabled: boolean })
+  | (BusEnvelope & { type: 'CORE_FLUSH_CONTRIBUTION_QUEUE' })
   | (BusEnvelope & { type: 'CORE_GET_CONTRIBUTION_STATUS' })
   | (BusEnvelope & { type: 'CORE_SET_CONTRIBUTION_ENDPOINT'; endpoint: string });
 
 export type CoreResponse =
-  | Result<StorageStateV2>
+  | Result<StorageState>
   | Result<{ success: true }>
   | Result<ThreatEvent[]>
-  | Result<SharedReport[]>
-  | Result<{ consent: boolean; queueLength: number; lastSyncAt: number | null }>
-  | Result<{ consentGiven: boolean; consentTimestamp: number; endpoint?: string }>;
+  | Result<ContributionReport[]>
+  | Result<ContributionStatus>;

@@ -1,13 +1,12 @@
 import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { browser } from 'wxt/browser';
-import type { EditorRule } from '../../features/editor/rules';
+import { SCHEMA_VERSION } from '../../core/contracts/types';
 import { ButtonGroup } from '../../lib/components/ButtonGroup';
 import { EmptyState } from '../../lib/components/EmptyState';
 import { SiteReportCard } from '../../lib/components/SiteReportCard';
 import { StatusBadge } from '../../lib/components/StatusBadge';
 import { ThreatExplainer } from '../../lib/components/ThreatExplainer';
-import { ACCESSIBILITY_PRESETS, BUILT_IN_THEMES } from '../../lib/themes';
 import type {
   CustomStyles,
   GrapesPreferences,
@@ -67,14 +66,6 @@ type ImportableGrapesPreferences = Omit<GrapesPreferences, 'autoDarkMode' | 'sit
   autoDarkMode?: boolean;
   siteStyles?: Record<string, CustomStyles>;
 };
-
-const FONT_PRESETS = [
-  '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-  'Arial, sans-serif',
-  'Georgia, serif',
-  '"Times New Roman", serif',
-  '"Courier New", monospace',
-];
 
 const ALLOWED_STYLE_KEYS = [
   'backgroundColor',
@@ -147,18 +138,6 @@ function normalizeCustomStyles(customStyles: CustomStyles): CustomStyles {
   if (fontFamily && isValidFontFamily(fontFamily)) normalized.fontFamily = fontFamily;
   if (customCSS && isSafeCustomCss(customCSS)) normalized.customCSS = customCSS;
   return normalized;
-}
-
-function customStylesEqual(a: CustomStyles, b: CustomStyles): boolean {
-  const normalizedA = normalizeCustomStyles(a);
-  const normalizedB = normalizeCustomStyles(b);
-  return (
-    normalizedA.backgroundColor === normalizedB.backgroundColor &&
-    normalizedA.textColor === normalizedB.textColor &&
-    normalizedA.fontSize === normalizedB.fontSize &&
-    normalizedA.fontFamily === normalizedB.fontFamily &&
-    normalizedA.customCSS === normalizedB.customCSS
-  );
 }
 
 function isGrapesPreferences(value: unknown): value is ImportableGrapesPreferences {
@@ -285,18 +264,15 @@ function Header({ preferences, currentDomain }: HeaderProps) {
 interface TabNavProps {
   currentTab: string;
   onTabChange: (tab: string) => void;
-  cssCustomizationEnabled?: boolean;
 }
 
-function TabNav({ currentTab, onTabChange, cssCustomizationEnabled }: TabNavProps) {
+function TabNav({ currentTab, onTabChange }: TabNavProps) {
   const tabs = [
     { id: 'now', label: '🔬 Now' },
     { id: 'protect', label: '🛡 Protect' },
-    ...(cssCustomizationEnabled ? [{ id: 'edit', label: '🎨 Edit' }] : []),
     { id: 'data', label: '📊 Data' },
   ];
 
-  // If current tab was removed (e.g. CSS flag turned off while on edit), fall back
   if (!tabs.find((t) => t.id === currentTab)) {
     onTabChange('now');
   }
@@ -674,372 +650,6 @@ function SettingsTab({
   );
 }
 
-// --- Styles Tab Component ---
-interface StylesTabProps {
-  preferences: GrapesPreferences;
-  currentDomain: string;
-  onPreferencesUpdate: (nextPreferences: GrapesPreferences) => Promise<boolean>;
-  onHighlightRuleUpdate: (text: string, color: string) => Promise<void>;
-}
-
-function StylesTab({
-  preferences,
-  currentDomain,
-  onPreferencesUpdate,
-  onHighlightRuleUpdate,
-}: StylesTabProps) {
-  const [customStylesEnabled, setCustomStylesEnabled] = useState(preferences.customStylesEnabled);
-  const [autoDarkMode, setAutoDarkMode] = useState(preferences.autoDarkMode);
-  const [saveScope, setSaveScope] = useState<'global' | 'site'>('global');
-  const [highlightText, setHighlightText] = useState('');
-  const [highlightColor, setHighlightColor] = useState('#fff2a8');
-  const [customStyles, setCustomStyles] = useState<CustomStyles>(
-    normalizeCustomStyles(preferences.customStyles),
-  );
-  const hasSiteOverride = !!(currentDomain && preferences.siteStyles[currentDomain]);
-
-  useEffect(() => {
-    if (currentDomain && preferences.siteStyles[currentDomain]) {
-      setSaveScope('site');
-    }
-  }, [currentDomain, preferences.siteStyles]);
-
-  useEffect(() => {
-    setCustomStylesEnabled(preferences.customStylesEnabled);
-    setAutoDarkMode(preferences.autoDarkMode);
-    const siteStyles = currentDomain ? preferences.siteStyles[currentDomain] : undefined;
-    if (saveScope === 'site') {
-      setCustomStyles(normalizeCustomStyles(siteStyles || {}));
-    } else {
-      setCustomStyles(normalizeCustomStyles(preferences.customStyles));
-    }
-  }, [preferences, currentDomain, saveScope]);
-
-  function buildNextPreferences(
-    nextStyles: CustomStyles,
-    customStylesFeatureEnabled: boolean,
-  ): GrapesPreferences {
-    const normalizedStyles = normalizeCustomStyles(nextStyles);
-    const nextPreferences: GrapesPreferences = {
-      ...preferences,
-      customStylesEnabled: customStylesFeatureEnabled,
-      autoDarkMode,
-      siteStyles: { ...preferences.siteStyles },
-    };
-
-    if (saveScope === 'site' && currentDomain) {
-      if (Object.keys(normalizedStyles).length === 0) {
-        delete nextPreferences.siteStyles[currentDomain];
-      } else {
-        nextPreferences.siteStyles[currentDomain] = normalizedStyles;
-      }
-    } else {
-      nextPreferences.customStyles = normalizedStyles;
-    }
-
-    return nextPreferences;
-  }
-
-  async function handleApply() {
-    await onPreferencesUpdate(buildNextPreferences(customStyles, customStylesEnabled));
-    await onHighlightRuleUpdate(highlightText, highlightColor);
-  }
-
-  async function handleReset() {
-    const resetPreferences: GrapesPreferences = {
-      ...preferences,
-      customStylesEnabled: false,
-      autoDarkMode: false,
-      customStyles: {},
-      siteStyles: { ...preferences.siteStyles },
-    };
-    if (currentDomain) {
-      delete resetPreferences.siteStyles[currentDomain];
-    }
-    if (await onPreferencesUpdate(resetPreferences)) {
-      setCustomStylesEnabled(resetPreferences.customStylesEnabled);
-      setAutoDarkMode(resetPreferences.autoDarkMode);
-      setCustomStyles(resetPreferences.customStyles);
-    }
-  }
-
-  async function handleThemeSelect(themeStyles: CustomStyles) {
-    const nextStyles = normalizeCustomStyles(themeStyles);
-    if (await onPreferencesUpdate(buildNextPreferences(nextStyles, true))) {
-      setCustomStylesEnabled(true);
-      setCustomStyles(nextStyles);
-    }
-  }
-
-  async function handlePresetApply(presetStyles: CustomStyles) {
-    const mergedStyles = normalizeCustomStyles({
-      ...customStyles,
-      ...presetStyles,
-    });
-    if (await onPreferencesUpdate(buildNextPreferences(mergedStyles, true))) {
-      setCustomStylesEnabled(true);
-      setCustomStyles(mergedStyles);
-    }
-  }
-
-  async function handleRemoveSiteOverride() {
-    if (!currentDomain) return;
-    const nextPreferences: GrapesPreferences = {
-      ...preferences,
-      autoDarkMode,
-      siteStyles: { ...preferences.siteStyles },
-    };
-    delete nextPreferences.siteStyles[currentDomain];
-    if (await onPreferencesUpdate(nextPreferences)) {
-      setCustomStyles(normalizeCustomStyles(preferences.customStyles));
-      setSaveScope('global');
-    }
-  }
-
-  const [inspectorStatus, setInspectorStatus] = useState('');
-
-  async function handleInspectElement() {
-    setInspectorStatus('');
-    try {
-      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-
-      if (!tab || !tab.id) {
-        setInspectorStatus('Unable to find the active tab.');
-        return;
-      }
-
-      if (tab.url && !/^https?:/i.test(tab.url)) {
-        setInspectorStatus('Inspector cannot run on this page type.');
-        return;
-      }
-
-      await browser.tabs.sendMessage(tab.id, { type: 'ACTIVATE_INSPECTOR' });
-    } catch (error) {
-      console.error('Failed to activate inspector', error);
-      setInspectorStatus('Unable to activate inspector on this page.');
-    }
-  }
-
-  const activeStyles = normalizeCustomStyles(customStyles);
-
-  return (
-    <div className="tab-content">
-      <div className="setting-section">
-        <label className="toggle-row">
-          <input
-            type="checkbox"
-            checked={customStylesEnabled}
-            onChange={(e) => setCustomStylesEnabled(e.target.checked)}
-          />
-          <span>Enable custom styles</span>
-        </label>
-        <label className="toggle-row">
-          <input
-            type="checkbox"
-            checked={autoDarkMode}
-            onChange={(e) => setAutoDarkMode(e.target.checked)}
-          />
-          <span>Auto Dark Mode</span>
-        </label>
-      </div>
-
-      <div className="setting-section">
-        <div className="setting-label">Save Scope</div>
-        <label className="toggle-row">
-          <input
-            type="radio"
-            name="style-save-scope"
-            checked={saveScope === 'global'}
-            onChange={() => setSaveScope('global')}
-          />
-          <span>Save globally</span>
-        </label>
-        <label className="toggle-row">
-          <input
-            type="radio"
-            name="style-save-scope"
-            checked={saveScope === 'site'}
-            onChange={() => setSaveScope('site')}
-            disabled={!currentDomain}
-          />
-          <span>Save for this site only</span>
-        </label>
-        {hasSiteOverride && (
-          <div className="setting-hint">Site override active for {currentDomain}</div>
-        )}
-      </div>
-
-      <div className="setting-section">
-        <div className="setting-label">Themes</div>
-        <div className="theme-grid">
-          {BUILT_IN_THEMES.map((theme) => (
-            <button
-              key={theme.id}
-              type="button"
-              className={`theme-card ${customStylesEqual(activeStyles, theme.styles) ? 'active' : ''}`}
-              onClick={() => handleThemeSelect(theme.styles)}
-            >
-              <span className="theme-icon">{theme.icon}</span>
-              <span className="theme-name">{theme.name}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="setting-section">
-        <div className="setting-label">Text Highlight Utility</div>
-        <input
-          type="text"
-          value={highlightText}
-          onChange={(e) => setHighlightText(e.target.value)}
-          placeholder="Highlight text containing..."
-          className="style-input"
-        />
-        <label className="setting-label style-sub-label" htmlFor="highlight-color">
-          Highlight Color
-        </label>
-        <input
-          id="highlight-color"
-          type="color"
-          value={highlightColor}
-          onChange={(e) => setHighlightColor(e.target.value)}
-        />
-        <div className="setting-hint">
-          Applies a local rule to highlight matching text on this page.
-        </div>
-      </div>
-
-      <div className="setting-section">
-        <div className="setting-label">♿ Accessibility</div>
-        <div className="preset-grid">
-          {ACCESSIBILITY_PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              className="secondary-btn"
-              onClick={() => handlePresetApply(preset.styles)}
-            >
-              {preset.icon} {preset.name}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="setting-section">
-        <label htmlFor="styles-background-color" className="setting-label">
-          Background Color
-        </label>
-        <input
-          id="styles-background-color"
-          type="color"
-          value={customStyles.backgroundColor || '#ffffff'}
-          onChange={(e) =>
-            setCustomStyles((prev) => ({ ...prev, backgroundColor: e.target.value }))
-          }
-        />
-      </div>
-
-      <div className="setting-section">
-        <label htmlFor="styles-text-color" className="setting-label">
-          Text Color
-        </label>
-        <input
-          id="styles-text-color"
-          type="color"
-          value={customStyles.textColor || '#000000'}
-          onChange={(e) => setCustomStyles((prev) => ({ ...prev, textColor: e.target.value }))}
-        />
-      </div>
-
-      <div className="setting-section">
-        <label htmlFor="styles-font-size" className="setting-label">
-          Font Size: {customStyles.fontSize || '16'}px
-        </label>
-        <input
-          id="styles-font-size"
-          type="range"
-          min="10"
-          max="32"
-          value={customStyles.fontSize || '16'}
-          onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontSize: e.target.value }))}
-          className="style-range"
-        />
-      </div>
-
-      <div className="setting-section">
-        <label htmlFor="styles-font-family-input" className="setting-label">
-          Font Family
-        </label>
-        <input
-          id="styles-font-family-input"
-          type="text"
-          value={customStyles.fontFamily || ''}
-          onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontFamily: e.target.value }))}
-          placeholder="e.g. Arial, sans-serif"
-          className="style-input"
-        />
-        <label htmlFor="styles-font-family-preset" className="setting-label style-sub-label">
-          Font Family Preset
-        </label>
-        <select
-          id="styles-font-family-preset"
-          value={customStyles.fontFamily || ''}
-          onChange={(e) => setCustomStyles((prev) => ({ ...prev, fontFamily: e.target.value }))}
-          className="style-input"
-        >
-          <option value="">Select a preset font...</option>
-          {FONT_PRESETS.map((font) => (
-            <option key={font} value={font}>
-              {font}
-            </option>
-          ))}
-        </select>
-        <div className="setting-hint">
-          Font family allows letters, numbers, spaces, commas, quotes, parentheses, and hyphens.
-        </div>
-      </div>
-
-      <div className="setting-section">
-        <label htmlFor="styles-custom-css" className="setting-label">
-          Custom CSS
-        </label>
-        <textarea
-          id="styles-custom-css"
-          rows={4}
-          value={customStyles.customCSS || ''}
-          onChange={(e) => setCustomStyles((prev) => ({ ...prev, customCSS: e.target.value }))}
-          placeholder="body { line-height: 1.6 !important; }"
-          className="style-textarea"
-        />
-        <div className="setting-hint">
-          Custom CSS cannot include closing style tags or javascript: values.
-        </div>
-      </div>
-
-      <div className="btn-row">
-        {hasSiteOverride && (
-          <button type="button" className="secondary-btn danger" onClick={handleRemoveSiteOverride}>
-            🗑️ Remove Site Override
-          </button>
-        )}
-        <button type="button" className="secondary-btn" onClick={handleInspectElement}>
-          🔍 Inspect Element
-        </button>
-      </div>
-      {inspectorStatus && <div className="setting-feedback error">{inspectorStatus}</div>}
-
-      <div className="btn-row">
-        <button type="button" className="secondary-btn" onClick={handleReset}>
-          ↺ Reset to Default
-        </button>
-        <button type="button" className="primary-btn apply-btn" onClick={handleApply}>
-          ✅ Apply
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // --- Muted Tab Component ---
 interface MutedTabProps {
   domains: string[];
@@ -1081,10 +691,9 @@ function MutedTab({ domains, onRemove }: MutedTabProps) {
 interface DataTabProps {
   domains: string[];
   onRemove: (domain: string) => void;
-  sharingConsent: boolean;
+  installationId: string;
   queueLength: number;
   lastSyncAt: number | null;
-  onConsentChange: (enabled: boolean) => Promise<void>;
   onFlushQueue: () => Promise<void>;
   contributionConsent: boolean;
   contributionEndpoint: string;
@@ -1095,10 +704,9 @@ interface DataTabProps {
 function DataTab({
   domains,
   onRemove,
-  sharingConsent,
+  installationId,
   queueLength,
   lastSyncAt,
-  onConsentChange,
   onFlushQueue,
   contributionConsent,
   contributionEndpoint,
@@ -1121,12 +729,17 @@ function DataTab({
           <span>Help map web surveillance</span>
         </label>
         <div className="setting-hint">
-          When enabled, GRAPES sends anonymized reports (domain + threat type only, no personal
-          data) to build a public dashboard of the worst surveillance offenders on the web. You can
-          opt out at any time.
+          When enabled, GRAPES sends privacy-minimized observations with a reinstall-scoped
+          installation ID used only for deduplication and corroboration. No full URLs leave the
+          extension.
+        </div>
+        <div className="setting-hint">Installation ID: {installationId || 'Pending setup'}</div>
+        <div className="setting-hint">Queue: {queueLength} pending contribution(s)</div>
+        <div className="setting-hint">
+          Last sync: {lastSyncAt ? new Date(lastSyncAt).toLocaleString() : 'Never'}
         </div>
         <div className="setting-label" style={{ marginTop: '12px' }}>
-          Server URL
+          Contribution Endpoint
         </div>
         <div className="btn-row">
           <input
@@ -1137,7 +750,7 @@ function DataTab({
               setEndpointDraft(e.target.value);
               setEndpointSaved(false);
             }}
-            placeholder="https://your-app.up.railway.app/api/v1/reports"
+            placeholder="https://api.example.com/v1/contributions"
             style={{ marginTop: 0 }}
           />
           <button
@@ -1153,26 +766,10 @@ function DataTab({
         </div>
         {endpointSaved && <div className="setting-feedback success">Endpoint saved.</div>}
         <div className="setting-hint">
-          Your GRAPES dashboard server URL. Deploy with Railway then paste the URL here.
-        </div>
-      </div>
-
-      <div className="setting-section">
-        <div className="setting-label">Sync Queue</div>
-        <label className="toggle-row">
-          <input
-            type="checkbox"
-            checked={sharingConsent}
-            onChange={(e) => onConsentChange(e.target.checked)}
-          />
-          <span>Share anonymous surveillance reports</span>
-        </label>
-        <div className="setting-hint">Queue: {queueLength} pending report(s)</div>
-        <div className="setting-hint">
-          Last sync: {lastSyncAt ? new Date(lastSyncAt).toLocaleString() : 'Never'}
+          Set the ingest endpoint for opt-in contribution uploads.
         </div>
         <button type="button" className="secondary-btn" onClick={onFlushQueue}>
-          Sync Queue
+          Sync Contributions
         </button>
       </div>
       <MutedTab domains={domains} onRemove={onRemove} />
@@ -1187,13 +784,12 @@ function PopupApp() {
   const [surveillance, setSurveillance] = useState<SurveillanceData | null>(null);
   const [currentTab, setCurrentTab] = useState('now');
   const [currentDomain, setCurrentDomain] = useState('');
-  const [sharingConsent, setSharingConsent] = useState(false);
+  const [installationId, setInstallationId] = useState('');
   const [queueLength, setQueueLength] = useState(0);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
   const [contributionConsent, setContributionConsent] = useState(false);
   const [contributionEndpoint, setContributionEndpoint] = useState('');
   const [showResetNotice, setShowResetNotice] = useState(false);
-  const [cssCustomizationEnabled, setCssCustomizationEnabled] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -1211,27 +807,11 @@ function PopupApp() {
             requestId: `popup-state-${Date.now()}`,
             source: 'popup',
             timestamp: Date.now(),
-            schemaVersion: 2,
+            schemaVersion: SCHEMA_VERSION,
           });
           if (coreState?.ok) {
             const ageMs = Date.now() - (coreState.data.installState?.resetTimestamp || 0);
             setShowResetNotice(ageMs < 1000 * 60 * 60 * 24);
-            setCssCustomizationEnabled(
-              !!coreState.data.coreSettings?.featureFlags?.cssCustomization,
-            );
-          }
-
-          const sharingStatus = await browser.runtime.sendMessage({
-            type: 'CORE_GET_SHARING_STATUS',
-            requestId: `popup-sharing-${Date.now()}`,
-            source: 'popup',
-            timestamp: Date.now(),
-            schemaVersion: 2,
-          });
-          if (sharingStatus?.ok) {
-            setSharingConsent(sharingStatus.data.consent);
-            setQueueLength(sharingStatus.data.queueLength);
-            setLastSyncAt(sharingStatus.data.lastSyncAt);
           }
 
           const contribStatus = await browser.runtime.sendMessage({
@@ -1239,11 +819,14 @@ function PopupApp() {
             requestId: `popup-contrib-${Date.now()}`,
             source: 'popup',
             timestamp: Date.now(),
-            schemaVersion: 2,
+            schemaVersion: SCHEMA_VERSION,
           });
           if (contribStatus?.ok) {
+            setInstallationId(contribStatus.data.installationId);
             setContributionConsent(contribStatus.data.consentGiven);
             setContributionEndpoint(contribStatus.data.endpoint || '');
+            setQueueLength(contribStatus.data.queueLength);
+            setLastSyncAt(contribStatus.data.lastSyncAt);
           }
         } catch {
           // Ignore if core router is unavailable during compatibility window.
@@ -1371,20 +954,6 @@ function PopupApp() {
     }
   }
 
-  async function handleSharingConsent(enabled: boolean): Promise<void> {
-    const response = await browser.runtime.sendMessage({
-      type: 'CORE_SET_SHARING_CONSENT',
-      enabled,
-      requestId: `popup-consent-${Date.now()}`,
-      source: 'popup',
-      timestamp: Date.now(),
-      schemaVersion: 2,
-    });
-    if (response?.ok) {
-      setSharingConsent(enabled);
-    }
-  }
-
   async function handleContributionChange(enabled: boolean): Promise<void> {
     const response = await browser.runtime.sendMessage({
       type: 'CORE_SET_CONTRIBUTION_CONSENT',
@@ -1392,7 +961,7 @@ function PopupApp() {
       requestId: `popup-contrib-consent-${Date.now()}`,
       source: 'popup',
       timestamp: Date.now(),
-      schemaVersion: 2,
+      schemaVersion: SCHEMA_VERSION,
     });
     if (response?.ok) {
       setContributionConsent(enabled);
@@ -1406,7 +975,7 @@ function PopupApp() {
       requestId: `popup-endpoint-${Date.now()}`,
       source: 'popup',
       timestamp: Date.now(),
-      schemaVersion: 2,
+      schemaVersion: SCHEMA_VERSION,
     });
     if (response?.ok) {
       setContributionEndpoint(endpoint);
@@ -1415,52 +984,27 @@ function PopupApp() {
 
   async function handleFlushQueue(): Promise<void> {
     const response = await browser.runtime.sendMessage({
-      type: 'CORE_FLUSH_SHARING_QUEUE',
+      type: 'CORE_FLUSH_CONTRIBUTION_QUEUE',
       requestId: `popup-flush-${Date.now()}`,
       source: 'popup',
       timestamp: Date.now(),
-      schemaVersion: 2,
+      schemaVersion: SCHEMA_VERSION,
     });
     if (response?.ok) {
       const status = await browser.runtime.sendMessage({
-        type: 'CORE_GET_SHARING_STATUS',
-        requestId: `popup-sharing-refresh-${Date.now()}`,
+        type: 'CORE_GET_CONTRIBUTION_STATUS',
+        requestId: `popup-contrib-refresh-${Date.now()}`,
         source: 'popup',
         timestamp: Date.now(),
-        schemaVersion: 2,
+        schemaVersion: SCHEMA_VERSION,
       });
       if (status?.ok) {
-        setSharingConsent(status.data.consent);
+        setInstallationId(status.data.installationId);
         setQueueLength(status.data.queueLength);
         setLastSyncAt(status.data.lastSyncAt);
+        setContributionConsent(status.data.consentGiven);
       }
     }
-  }
-
-  async function handleHighlightRuleUpdate(text: string, color: string): Promise<void> {
-    const rule: EditorRule[] =
-      text.trim().length > 0
-        ? [
-            {
-              id: `highlight-${currentDomain || 'global'}`,
-              enabled: true,
-              type: 'text-highlight',
-              label: 'Highlight text',
-              payload: {
-                text: text.trim(),
-                color,
-              },
-            },
-          ]
-        : [];
-    await browser.runtime.sendMessage({
-      type: 'CORE_SET_EDITOR_RULES',
-      rules: rule,
-      requestId: `popup-rules-${Date.now()}`,
-      source: 'popup',
-      timestamp: Date.now(),
-      schemaVersion: 2,
-    });
   }
 
   if (!preferences) {
@@ -1486,15 +1030,12 @@ function PopupApp() {
     <div className="popup-container">
       {showResetNotice && (
         <div className="setting-feedback success">
-          GRAPES storage was reset for schema v2. Configure protection and sharing preferences.
+          GRAPES storage was reset for schema v{SCHEMA_VERSION}. Configure protection and
+          contribution preferences.
         </div>
       )}
       <Header preferences={preferences} currentDomain={currentDomain} />
-      <TabNav
-        currentTab={currentTab}
-        onTabChange={setCurrentTab}
-        cssCustomizationEnabled={cssCustomizationEnabled}
-      />
+      <TabNav currentTab={currentTab} onTabChange={setCurrentTab} />
       {currentTab === 'now' && (
         <ActivityTab
           logEntry={logEntry}
@@ -1517,23 +1058,14 @@ function PopupApp() {
         <DataTab
           domains={preferences.suppressedNotificationDomains}
           onRemove={handleRemoveMuted}
-          sharingConsent={sharingConsent}
+          installationId={installationId}
           queueLength={queueLength}
           lastSyncAt={lastSyncAt}
-          onConsentChange={handleSharingConsent}
           onFlushQueue={handleFlushQueue}
           contributionConsent={contributionConsent}
           contributionEndpoint={contributionEndpoint}
           onContributionChange={handleContributionChange}
           onEndpointChange={handleEndpointChange}
-        />
-      )}
-      {currentTab === 'edit' && cssCustomizationEnabled && (
-        <StylesTab
-          preferences={preferences}
-          currentDomain={currentDomain}
-          onPreferencesUpdate={handlePreferencesUpdate}
-          onHighlightRuleUpdate={handleHighlightRuleUpdate}
         />
       )}
     </div>

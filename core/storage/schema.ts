@@ -1,30 +1,15 @@
-import type { EditorRule } from '../../features/editor/rules';
 import type { CustomStyles, GrapesPreferences } from '../../lib/types';
-import type { SharedReport, ThreatEvent } from '../contracts/types';
+import type { ContributionReport, InstallationProfile, ThreatEvent } from '../contracts/types';
 import { type ProtectionMode, SCHEMA_VERSION, type SitePolicy } from '../contracts/types';
 
 export interface CoreSettings {
   schemaVersion: number;
   mode: ProtectionMode;
   loggingEnabled: boolean;
-  featureFlags: {
-    strictProtection: boolean;
-    editorRules: boolean;
-    sharingQueue: boolean;
-    cssCustomization: boolean;
-  };
 }
 
 export interface SitePolicyMap {
   [domain: string]: SitePolicy;
-}
-
-export interface SharingState {
-  consent: boolean;
-  queue: SharedReport[];
-  retryCount: number;
-  nextRetryAt: number | null;
-  lastSyncAt: number | null;
 }
 
 export interface InstallState {
@@ -51,10 +36,9 @@ export const DEFAULT_CONTRIBUTION_SETTINGS: ContributionSettings = {
   uploadIntervalMinutes: 60,
 };
 
-export interface StorageStateV2 {
+export interface StorageState {
   coreSettings: CoreSettings;
   sitePolicy: SitePolicyMap;
-  editorRules: EditorRule[];
   editorStyles: {
     customStylesEnabled: boolean;
     autoDarkMode: boolean;
@@ -63,25 +47,29 @@ export interface StorageStateV2 {
     suppressedNotificationDomains: string[];
   };
   logs: ThreatEvent[];
-  sharing: SharingState;
   contribution: ContributionSettings;
+  installation: InstallationProfile;
   installState: InstallState;
 }
 
-export const DEFAULT_STORAGE_STATE_V2: StorageStateV2 = {
+export function createInstallationProfile(overrides?: Partial<InstallationProfile>): InstallationProfile {
+  return {
+    installationId:
+      overrides?.installationId ||
+      globalThis.crypto?.randomUUID?.() ||
+      `grapes-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+    createdAt: overrides?.createdAt || Date.now(),
+    browserFamily: overrides?.browserFamily || 'unknown',
+  };
+}
+
+export const DEFAULT_STORAGE_STATE: StorageState = {
   coreSettings: {
     schemaVersion: SCHEMA_VERSION,
     mode: 'detection-only',
     loggingEnabled: true,
-    featureFlags: {
-      strictProtection: false,
-      editorRules: true,
-      sharingQueue: true,
-      cssCustomization: false,
-    },
   },
   sitePolicy: {},
-  editorRules: [],
   editorStyles: {
     customStylesEnabled: false,
     autoDarkMode: false,
@@ -90,14 +78,10 @@ export const DEFAULT_STORAGE_STATE_V2: StorageStateV2 = {
     suppressedNotificationDomains: [],
   },
   logs: [],
-  sharing: {
-    consent: false,
-    queue: [],
-    retryCount: 0,
-    nextRetryAt: null,
-    lastSyncAt: null,
-  },
   contribution: { ...DEFAULT_CONTRIBUTION_SETTINGS },
+  installation: createInstallationProfile({
+    installationId: 'pending-installation-id',
+  }),
   installState: {
     schemaVersion: SCHEMA_VERSION,
     hardResetApplied: false,
@@ -105,7 +89,7 @@ export const DEFAULT_STORAGE_STATE_V2: StorageStateV2 = {
   },
 };
 
-export function toLegacyPreferences(state: StorageStateV2): GrapesPreferences {
+export function toLegacyPreferences(state: StorageState): GrapesPreferences {
   return {
     globalMode: state.coreSettings.mode,
     siteSettings: state.sitePolicy,
@@ -121,8 +105,8 @@ export function toLegacyPreferences(state: StorageStateV2): GrapesPreferences {
 
 export function fromLegacyPreferences(
   preferences: GrapesPreferences,
-  current: StorageStateV2,
-): StorageStateV2 {
+  current: StorageState,
+): StorageState {
   return {
     ...current,
     coreSettings: {

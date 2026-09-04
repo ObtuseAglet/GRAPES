@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Superseded
 
 ## Date
 

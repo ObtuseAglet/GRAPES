@@ -1,14 +1,14 @@
 {
   "name": "grapes",
   "version": "1.0.0",
-  "description": "Chrome extension for customizing website appearance based on user preferences",
+  "description": "Browser extension for exposing web surveillance and contributing privacy-minimized accountability data",
   "type": "module",
   "scripts": {
     "dev": "wxt",
     "dev:firefox": "wxt -b firefox",
     "build": "wxt build && npm run fix-paths",
     "build:firefox": "wxt build -b firefox",
-    "fix-paths": "sed -i 's|src=\"/chunks/|src=\"chunks/|g; s|href=\"/chunks/|href=\"chunks/|g; s|href=\"/assets/|href=\"assets/|g' .output/chrome-mv3/*.html 2>/dev/null || true",
+    "fix-paths": "node -e \"const fs=require('fs');const path=require('path');const dir=path.join(process.cwd(),'.output','chrome-mv3');if(!fs.existsSync(dir))process.exit(0);for(const file of fs.readdirSync(dir)){if(!file.endsWith('.html'))continue;const target=path.join(dir,file);let content=fs.readFileSync(target,'utf8');content=content.replace(/src=\\\"\\/chunks\\//g,'src=\\\"chunks/').replace(/href=\\\"\\/chunks\\//g,'href=\\\"chunks/').replace(/href=\\\"\\/assets\\//g,'href=\\\"assets/');fs.writeFileSync(target,content);}\"",
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "postinstall": "wxt prepare",

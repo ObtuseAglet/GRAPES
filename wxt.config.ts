@@ -4,8 +4,9 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
-    name: 'GRAPES - Website Appearance Customizer',
-    description: 'Customize the appearance of websites based on your preferences',
+    name: 'GRAPES - Web Surveillance Monitor',
+    description:
+      'Inspect web surveillance, understand privacy risk, and optionally contribute privacy-minimized data.',
     permissions: ['storage', 'activeTab', 'alarms'],
     action: {
       default_icon: 'icon.svg',

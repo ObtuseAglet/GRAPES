@@ -1,8 +1,4 @@
-import { applyEditorRules } from '../features/editor/rules';
-import { activateSelectorInspector } from '../lib/inspector';
 import { injectStealthTest } from '../lib/stealth-tester';
-import { BUILT_IN_THEMES } from '../lib/themes';
-import type { CustomStyles, GrapesPreferences } from '../lib/types';
 
 // ============================================================================
 // NOTIFICATION MANAGER - Handles stacking toast notifications
@@ -503,24 +499,6 @@ export default defineContentScript({
           document.addEventListener('DOMContentLoaded', () => injectStealthTest());
         }
       }
-      if (message.type === 'ACTIVATE_INSPECTOR') {
-        // Inspector is a CSS customization tool — gated behind feature flag.
-        // Check flag before activating; fall through silently if disabled.
-        browser.runtime
-          .sendMessage({
-            type: 'CORE_GET_STATE',
-            requestId: `inspector-check-${Date.now()}`,
-            source: 'content',
-            timestamp: Date.now(),
-            schemaVersion: 2,
-          })
-          .then((response) => {
-            if (response?.ok && response.data?.coreSettings?.featureFlags?.cssCustomization) {
-              activateSelectorInspector();
-            }
-          })
-          .catch(() => {});
-      }
       return;
     });
 
@@ -669,131 +647,6 @@ export default defineContentScript({
       }
     });
 
-    const darkThemeStyles = BUILT_IN_THEMES.find((theme) => theme.id === 'dark')?.styles || {};
-    const darkModeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-
-    const applyPreferredStyles = (preferences: GrapesPreferences) => {
-      const currentDomainStyles = preferences.siteStyles?.[currentDomain];
-      if (preferences.customStylesEnabled) {
-        if (hasCustomStyleValues(currentDomainStyles || {})) {
-          applyCustomStyles(currentDomainStyles || {});
-          return;
-        }
-        if (hasCustomStyleValues(preferences.customStyles || {})) {
-          applyCustomStyles(preferences.customStyles || {});
-          return;
-        }
-      }
-
-      if (preferences.autoDarkMode && darkModeMediaQuery.matches) {
-        applyCustomStyles(darkThemeStyles);
-        return;
-      }
-
-      removeCustomStyles();
-    };
-
-    // Wait for DOM to be ready before applying styles
-    const applyWhenReady = () => {
-      browser.runtime
-        .sendMessage({
-          type: 'CORE_GET_STATE',
-          requestId: `content-${Date.now()}`,
-          source: 'content',
-          timestamp: Date.now(),
-          schemaVersion: 2,
-        })
-        .then((response) => {
-          if (response?.ok && response.data) {
-            const state = response.data;
-            // CSS customization is behind a feature flag — skip if disabled
-            if (!state.coreSettings?.featureFlags?.cssCustomization) {
-              removeCustomStyles();
-              return;
-            }
-            const preferences = {
-              globalMode: state.coreSettings.mode,
-              siteSettings: state.sitePolicy,
-              customStylesEnabled: state.editorStyles.customStylesEnabled,
-              autoDarkMode: state.editorStyles.autoDarkMode,
-              customStyles: state.editorStyles.customStyles,
-              siteStyles: state.editorStyles.siteStyles,
-              suppressedNotificationDomains: state.editorStyles.suppressedNotificationDomains,
-              onboardingComplete: true,
-              loggingEnabled: state.coreSettings.loggingEnabled,
-            } as GrapesPreferences;
-            applyPreferredStyles(preferences);
-            applyEditorRules(state.editorRules || []);
-            return;
-          }
-          // Legacy fallback — no feature flag available, skip styles
-          removeCustomStyles();
-        })
-        .catch(() => {
-          // Core unavailable — skip styles
-          removeCustomStyles();
-        });
-    };
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', applyWhenReady);
-    } else {
-      applyWhenReady();
-    }
-
-    // Listen for preference changes — only apply styles if CSS customization flag is on
-    browser.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName === 'sync' && changes.v2_state?.newValue) {
-        const nextState = changes.v2_state.newValue;
-        if (!nextState.coreSettings?.featureFlags?.cssCustomization) {
-          removeCustomStyles();
-          return;
-        }
-        if (nextState.editorRules) {
-          applyEditorRules(nextState.editorRules);
-        }
-      }
-      if (areaName === 'sync' && changes.preferences) {
-        // Legacy path — check flag via message before applying
-        browser.runtime
-          .sendMessage({
-            type: 'CORE_GET_STATE',
-            requestId: `style-change-${Date.now()}`,
-            source: 'content',
-            timestamp: Date.now(),
-            schemaVersion: 2,
-          })
-          .then((response) => {
-            if (response?.ok && response.data?.coreSettings?.featureFlags?.cssCustomization) {
-              const newPreferences = (changes.preferences?.newValue || {}) as GrapesPreferences;
-              applyPreferredStyles(newPreferences);
-            } else {
-              removeCustomStyles();
-            }
-          })
-          .catch(() => {});
-      }
-    });
-
-    darkModeMediaQuery.addEventListener('change', () => {
-      browser.runtime
-        .sendMessage({
-          type: 'CORE_GET_STATE',
-          requestId: `darkmode-change-${Date.now()}`,
-          source: 'content',
-          timestamp: Date.now(),
-          schemaVersion: 2,
-        })
-        .then((response) => {
-          if (response?.ok && response.data?.coreSettings?.featureFlags?.cssCustomization) {
-            browser.storage.sync.get(['preferences']).then((result) => {
-              const preferences = (result.preferences || {}) as GrapesPreferences;
-              applyPreferredStyles(preferences);
-            });
-          }
-        })
-        .catch(() => {});
-    });
   },
 });
 
@@ -815,65 +668,4 @@ function extractDomainFromHostname(hostname: string): string {
   }
 
   return parts.slice(-2).join('.');
-}
-
-/**
- * Apply custom styles to the current page
- * All GRAPES elements use 'grapes-' prefix for stealth detection
- */
-function applyCustomStyles(customStyles: CustomStyles) {
-  // Remove existing custom styles
-  removeCustomStyles();
-
-  // Create a style element for custom styles
-  // ID starts with 'grapes-' so stealth-injector can identify it
-  const styleElement = document.createElement('style');
-  styleElement.id = 'grapes-custom-styles';
-  styleElement.setAttribute('data-grapes-injected', 'true');
-
-  // Build CSS from preferences
-  let cssRules = '';
-
-  // Example: Apply custom styles based on preferences
-  // This can be extended based on specific website targeting and user preferences
-  if (customStyles.backgroundColor) {
-    cssRules += `body { background-color: ${customStyles.backgroundColor} !important; }\n`;
-  }
-
-  if (customStyles.textColor) {
-    cssRules += `body { color: ${customStyles.textColor} !important; }\n`;
-  }
-
-  if (customStyles.fontSize) {
-    cssRules += `body { font-size: ${customStyles.fontSize}px !important; }\n`;
-  }
-
-  if (customStyles.fontFamily) {
-    cssRules += `body { font-family: ${customStyles.fontFamily} !important; }\n`;
-  }
-
-  // Add custom CSS rules if provided
-  if (customStyles.customCSS) {
-    cssRules += customStyles.customCSS;
-  }
-
-  styleElement.textContent = cssRules;
-  document.head.appendChild(styleElement);
-
-  console.log('[GRAPES] Custom styles applied');
-}
-
-function hasCustomStyleValues(customStyles: CustomStyles): boolean {
-  return Object.values(customStyles).some((value) => !!value);
-}
-
-/**
- * Remove custom styles from the current page
- */
-function removeCustomStyles() {
-  const existingStyle = document.getElementById('grapes-custom-styles');
-  if (existingStyle) {
-    existingStyle.remove();
-    console.log('[GRAPES] Custom styles removed');
-  }
 }

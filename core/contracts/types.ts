@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 2 as const;
+export const SCHEMA_VERSION = 3 as const;
 
 export type ProtectionMode = 'full' | 'detection-only' | 'disabled' | 'spoof';
 export type SitePolicy = 'enabled' | 'disabled' | 'default';
@@ -18,6 +18,7 @@ export type ThreatDetector =
   | 'network-tracker';
 
 export type ExtensionSource = 'background' | 'content' | 'popup' | 'onboarding' | 'stealth';
+export type BrowserFamily = 'chromium' | 'firefox' | 'unknown';
 
 export type Result<T, E = string> =
   | {
@@ -43,17 +44,42 @@ export interface ThreatEvent {
   url: string;
 }
 
-export interface SharedReport {
+export interface InstallationProfile {
+  installationId: string;
+  createdAt: number;
+  browserFamily: BrowserFamily;
+}
+
+export interface ContributionReport {
   id: string;
+  installationId: string;
+  claimKey: string;
   domain: string;
   category: ThreatCategory;
   detector: ThreatDetector;
   confidence: 'low' | 'medium' | 'high';
   blocked: boolean;
   mode: ProtectionMode;
-  ts: number;
+  observedDay: number;
   evidence: string[];
   clientSchemaVersion: number;
+}
+
+export interface ContributionBatch {
+  batchId: string;
+  installationId: string;
+  createdAt: number;
+  clientSchemaVersion: number;
+  reports: ContributionReport[];
+}
+
+export interface ContributionStatus {
+  installationId: string;
+  consentGiven: boolean;
+  consentTimestamp: number;
+  endpoint: string;
+  queueLength: number;
+  lastSyncAt: number | null;
 }
 
 export interface BusEnvelope {

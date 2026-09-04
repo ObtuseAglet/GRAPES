@@ -1,12 +1,12 @@
-import type { SharedReport } from '../contracts/types';
-import type { SyncProvider } from './provider';
+import type { ContributionReport } from '../contracts/types';
+import type { ContributionProvider } from './provider';
 
-const KEY = 'v2_sharing_state';
+const KEY = 'v3_contribution_queue_state';
 const RETRY_MS = 30_000;
 
 interface QueueState {
   consent: boolean;
-  queue: SharedReport[];
+  queue: ContributionReport[];
   retryCount: number;
   nextRetryAt: number | null;
   lastSyncAt: number | null;
@@ -20,8 +20,8 @@ const DEFAULT_QUEUE_STATE: QueueState = {
   lastSyncAt: null,
 };
 
-export class SharingQueueService {
-  constructor(private provider: SyncProvider) {}
+export class ContributionQueueService {
+  constructor(private provider: ContributionProvider) {}
 
   async getState(): Promise<QueueState> {
     const result = await browser.storage.local.get([KEY]);
@@ -40,7 +40,7 @@ export class SharingQueueService {
     return next;
   }
 
-  async enqueue(report: SharedReport): Promise<QueueState> {
+  async enqueue(report: ContributionReport): Promise<QueueState> {
     const state = await this.getState();
     if (!state.consent) return state;
     const next = { ...state, queue: [...state.queue, report] };

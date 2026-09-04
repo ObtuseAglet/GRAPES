@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ThreatEvent } from '../contracts/types';
-import { toSharedReport } from './sanitizer';
+import { SCHEMA_VERSION, type ThreatEvent } from '../contracts/types';
+import { toContributionReport } from './sanitizer';
 
 function makeThreatEvent(overrides?: Partial<ThreatEvent>): ThreatEvent {
   return {
@@ -19,17 +19,19 @@ function makeThreatEvent(overrides?: Partial<ThreatEvent>): ThreatEvent {
   };
 }
 
-describe('toSharedReport', () => {
+const INSTALLATION_ID = 'install-test-123';
+
+describe('toContributionReport', () => {
   it('strips url and keeps only domain', () => {
-    const report = toSharedReport(makeThreatEvent());
+    const report = toContributionReport(makeThreatEvent(), INSTALLATION_ID);
     expect(report.domain).toBe('example.com');
     expect(report).not.toHaveProperty('url');
   });
 
   it('rounds timestamp to start of UTC day', () => {
     const event = makeThreatEvent({ ts: 1712188800000 + 45000000 }); // mid-day
-    const report = toSharedReport(event);
-    const date = new Date(report.ts);
+    const report = toContributionReport(event, INSTALLATION_ID);
+    const date = new Date(report.observedDay);
     expect(date.getUTCHours()).toBe(0);
     expect(date.getUTCMinutes()).toBe(0);
     expect(date.getUTCSeconds()).toBe(0);
@@ -40,7 +42,7 @@ describe('toSharedReport', () => {
     const event = makeThreatEvent({
       evidence: ['user@example.com sent data', 'normal evidence'],
     });
-    const report = toSharedReport(event);
+    const report = toContributionReport(event, INSTALLATION_ID);
     expect(report.evidence[0]).toContain('[redacted]');
     expect(report.evidence[0]).not.toContain('user@example.com');
   });
@@ -49,7 +51,7 @@ describe('toSharedReport', () => {
     const event = makeThreatEvent({
       evidence: ['connected to 192.168.1.100 tracker'],
     });
-    const report = toSharedReport(event);
+    const report = toContributionReport(event, INSTALLATION_ID);
     expect(report.evidence[0]).toContain('[ip]');
     expect(report.evidence[0]).not.toContain('192.168.1.100');
   });
@@ -58,7 +60,7 @@ describe('toSharedReport', () => {
     const event = makeThreatEvent({
       evidence: ['https://tracker.com/pixel?uid=abc123&session=xyz'],
     });
-    const report = toSharedReport(event);
+    const report = toContributionReport(event, INSTALLATION_ID);
     expect(report.evidence[0]).not.toContain('abc123');
     expect(report.evidence[0]).not.toContain('xyz');
   });
@@ -66,7 +68,7 @@ describe('toSharedReport', () => {
   it('truncates evidence strings to 80 chars', () => {
     const long = 'a'.repeat(200);
     const event = makeThreatEvent({ evidence: [long] });
-    const report = toSharedReport(event);
+    const report = toContributionReport(event, INSTALLATION_ID);
     expect(report.evidence[0].length).toBe(80);
   });
 
@@ -74,13 +76,13 @@ describe('toSharedReport', () => {
     const event = makeThreatEvent({
       evidence: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
     });
-    const report = toSharedReport(event);
+    const report = toContributionReport(event, INSTALLATION_ID);
     expect(report.evidence.length).toBe(5);
   });
 
   it('preserves category, detector, confidence, blocked, and mode', () => {
     const event = makeThreatEvent();
-    const report = toSharedReport(event);
+    const report = toContributionReport(event, INSTALLATION_ID);
     expect(report.category).toBe('fingerprinting');
     expect(report.detector).toBe('fingerprint-api');
     expect(report.confidence).toBe('high');
@@ -88,8 +90,14 @@ describe('toSharedReport', () => {
     expect(report.mode).toBe('full');
   });
 
-  it('sets clientSchemaVersion to 2', () => {
-    const report = toSharedReport(makeThreatEvent());
-    expect(report.clientSchemaVersion).toBe(2);
+  it('adds installation and claim identity', () => {
+    const report = toContributionReport(makeThreatEvent(), INSTALLATION_ID);
+    expect(report.installationId).toBe(INSTALLATION_ID);
+    expect(report.claimKey).toBe('example.com:fingerprinting:fingerprint-api');
+  });
+
+  it('sets clientSchemaVersion to the current schema', () => {
+    const report = toContributionReport(makeThreatEvent(), INSTALLATION_ID);
+    expect(report.clientSchemaVersion).toBe(SCHEMA_VERSION);
   });
 });

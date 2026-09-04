@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { browser } from 'wxt/browser';
 import type { GrapesPreferences } from '../../lib/types';
@@ -10,8 +10,8 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
       <div className="step-icon">🍇</div>
       <h1>Welcome to GRAPES</h1>
       <p className="step-subtitle">
-        <strong>G</strong>raphical <strong>R</strong>endering <strong>A</strong>lterations for{' '}
-        <strong>P</strong>rivacy, <strong>E</strong>nhancement and <strong>S</strong>tealth
+        Inspect what sites are collecting, decide what to trust, and contribute anonymous evidence
+        when you choose to.
       </p>
       <div className="step-content">
         <p>
@@ -69,7 +69,7 @@ function ModeSelectionStep({
 }) {
   return (
     <div className="onboarding-step">
-      <div className="step-indicator">Step 1 of 2</div>
+      <div className="step-indicator">Step 1 of 1</div>
       <h2>Choose Your Protection Level</h2>
       <p className="step-subtitle">How would you like GRAPES to handle tracking?</p>
       <div className="mode-options">
@@ -109,67 +109,7 @@ function ModeSelectionStep({
           ← Back
         </button>
         <button type="button" className="primary-button" onClick={onNext}>
-          Continue →
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function CustomStylesStep({
-  enableCustomStyles,
-  onToggleStyles,
-  onFinish,
-  onBack,
-}: {
-  enableCustomStyles: boolean;
-  onToggleStyles: (enabled: boolean) => void;
-  onFinish: () => void;
-  onBack: () => void;
-}) {
-  return (
-    <div className="onboarding-step">
-      <div className="step-indicator">Step 2 of 2</div>
-      <h2>Custom Page Styles</h2>
-      <p className="step-subtitle">Would you like to customize how web pages look?</p>
-      <div className="step-content">
-        <div className="style-options">
-          <button
-            type="button"
-            className={`style-option ${!enableCustomStyles ? 'selected' : ''}`}
-            onClick={() => onToggleStyles(false)}
-          >
-            <div className="option-radio">
-              <div className={`radio-circle ${!enableCustomStyles ? 'checked' : ''}`} />
-            </div>
-            <div>
-              <h4>Keep it Simple</h4>
-              <p>Don't modify page appearance (recommended)</p>
-              <p className="option-note">✓ Maximum stealth - pages won't detect GRAPES</p>
-            </div>
-          </button>
-          <button
-            type="button"
-            className={`style-option ${enableCustomStyles ? 'selected' : ''}`}
-            onClick={() => onToggleStyles(true)}
-          >
-            <div className="option-radio">
-              <div className={`radio-circle ${enableCustomStyles ? 'checked' : ''}`} />
-            </div>
-            <div>
-              <h4>Enable Custom Styles</h4>
-              <p>Change colors, fonts, and inject custom CSS</p>
-              <p className="option-note">⚠️ May be detectable by some websites</p>
-            </div>
-          </button>
-        </div>
-      </div>
-      <div className="button-row">
-        <button type="button" className="secondary-button" onClick={onBack}>
-          ← Back
-        </button>
-        <button type="button" className="primary-button finish-button" onClick={onFinish}>
-          🎉 Start Using GRAPES
+          Start Using GRAPES →
         </button>
       </div>
     </div>
@@ -211,36 +151,12 @@ function CompletionStep() {
 function OnboardingApp() {
   const [step, setStep] = useState(0);
   const [selectedMode, setSelectedMode] = useState<'full' | 'detection-only'>('detection-only');
-  const [enableCustomStyles, setEnableCustomStyles] = useState(false);
-  const [cssFeatureEnabled, setCssFeatureEnabled] = useState(false);
-
-  // Check if CSS customization feature flag is on
-  useEffect(() => {
-    browser.runtime
-      .sendMessage({
-        type: 'CORE_GET_STATE',
-        requestId: `onboard-flags-${Date.now()}`,
-        source: 'onboarding',
-        timestamp: Date.now(),
-        schemaVersion: 2,
-      })
-      .then((response: Record<string, unknown>) => {
-        if (response?.ok && (response.data as Record<string, unknown>)) {
-          const data = response.data as {
-            coreSettings?: { featureFlags?: { cssCustomization?: boolean } };
-          };
-          setCssFeatureEnabled(!!data.coreSettings?.featureFlags?.cssCustomization);
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   const handleFinish = async () => {
-    // Save preferences — force customStylesEnabled off when feature flag is disabled
     const preferences: GrapesPreferences = {
       globalMode: selectedMode,
       siteSettings: {},
-      customStylesEnabled: cssFeatureEnabled ? enableCustomStyles : false,
+      customStylesEnabled: false,
       autoDarkMode: false,
       customStyles: {},
       siteStyles: {},
@@ -267,24 +183,14 @@ function OnboardingApp() {
           <ModeSelectionStep
             selectedMode={selectedMode}
             onSelectMode={setSelectedMode}
-            onNext={() => {
-              cssFeatureEnabled ? setStep(2) : handleFinish();
-            }}
+            onNext={handleFinish}
             onBack={() => setStep(0)}
-          />
-        )}
-        {step === 2 && (
-          <CustomStylesStep
-            enableCustomStyles={enableCustomStyles}
-            onToggleStyles={setEnableCustomStyles}
-            onFinish={handleFinish}
-            onBack={() => setStep(1)}
           />
         )}
         {step === 3 && <CompletionStep />}
       </div>
       <div className="onboarding-footer">
-        <p>GRAPES respects your privacy. No data is ever sent to external servers.</p>
+        <p>GRAPES only contributes data when you opt in. No full URLs are sent.</p>
       </div>
     </div>
   );
@@ -487,73 +393,6 @@ style.textContent = `
     padding: 5px 0;
   }
 
-  .style-options {
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
-    margin-bottom: 30px;
-  }
-
-  .style-option {
-    display: flex;
-    align-items: flex-start;
-    gap: 15px;
-    padding: 20px;
-    border: 2px solid #e0e0e0;
-    border-radius: 12px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    text-align: left;
-    background: none;
-    font: inherit;
-    color: inherit;
-  }
-
-  .style-option:hover {
-    border-color: #667eea;
-  }
-
-  .style-option.selected {
-    border-color: #667eea;
-    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
-  }
-
-  .option-radio {
-    flex-shrink: 0;
-    margin-top: 3px;
-  }
-
-  .radio-circle {
-    width: 20px;
-    height: 20px;
-    border: 2px solid #ccc;
-    border-radius: 50%;
-    transition: all 0.2s ease;
-  }
-
-  .radio-circle.checked {
-    border-color: #667eea;
-    background: #667eea;
-    box-shadow: inset 0 0 0 4px white;
-  }
-
-  .style-option h4 {
-    color: #333;
-    margin-bottom: 5px;
-  }
-
-  .style-option p {
-    color: #666;
-    font-size: 14px;
-    margin: 0;
-  }
-
-  .option-note {
-    margin-top: 8px !important;
-    font-size: 12px !important;
-    opacity: 0.8;
-  }
-
   .button-row {
     display: flex;
     justify-content: space-between;
@@ -592,10 +431,6 @@ style.textContent = `
   .secondary-button:hover {
     border-color: #667eea;
     color: #667eea;
-  }
-
-  .finish-button {
-    flex: 1;
   }
 
   .completion-tips {

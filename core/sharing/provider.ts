@@ -1,18 +1,18 @@
-import type { SharedReport } from '../contracts/types';
+import type { ContributionReport } from '../contracts/types';
 
-export interface SyncProvider {
-  enqueueReport(report: SharedReport): Promise<void>;
-  flushQueue(queue: SharedReport[]): Promise<{ synced: number }>;
+export interface ContributionProvider {
+  enqueueReport(report: ContributionReport): Promise<void>;
+  flushQueue(queue: ContributionReport[]): Promise<{ synced: number }>;
   getSyncStatus(): Promise<{ available: boolean; provider: string }>;
   setConsent(enabled: boolean): Promise<void>;
 }
 
-export class MockSyncProvider implements SyncProvider {
-  async enqueueReport(_report: SharedReport): Promise<void> {
+export class MockContributionProvider implements ContributionProvider {
+  async enqueueReport(_report: ContributionReport): Promise<void> {
     return;
   }
 
-  async flushQueue(queue: SharedReport[]): Promise<{ synced: number }> {
+  async flushQueue(queue: ContributionReport[]): Promise<{ synced: number }> {
     return { synced: queue.length };
   }
 

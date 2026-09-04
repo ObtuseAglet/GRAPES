@@ -1,5 +1,5 @@
 import type { ProtectionMode } from '../contracts/types';
-import type { StorageStateV2 } from '../storage/schema';
+import type { StorageState } from '../storage/schema';
 import { extractBaseDomain } from './domain';
 
 export interface PolicyStatus {
@@ -8,7 +8,7 @@ export interface PolicyStatus {
   siteOverride: 'enabled' | 'disabled' | 'default' | null;
 }
 
-export function getProtectionStatusForDomain(domain: string, state: StorageStateV2): PolicyStatus {
+export function getProtectionStatusForDomain(domain: string, state: StorageState): PolicyStatus {
   const baseDomain = extractBaseDomain(domain);
   const siteOverride = state.sitePolicy[baseDomain] || null;
 
